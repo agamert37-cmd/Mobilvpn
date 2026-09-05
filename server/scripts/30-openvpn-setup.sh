@@ -10,6 +10,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 require_root
 
+# Bu betik scripts/ içinden çalışır; systemd/ kardeş dizindedir.
+REPO_ROOT="$(cd .. && pwd)"
 EASYRSA_DIR="${VPN_OVPN_EASYRSA_DIR:-/etc/openvpn/easy-rsa}"
 SERVER_DIR="${VPN_OVPN_SERVER_DIR:-/etc/openvpn/server}"
 CCD_DIR="$SERVER_DIR/ccd"
@@ -104,7 +106,21 @@ persist-key
 persist-tun
 user nobody
 group nogroup
-verb 3
+# verb 0, ölçülmüş bir gizlilik kararıdır — keyfi değil.
+#
+# Gerçek bir openvpn 2.6.19'a karşı ölçüldü (bkz. docs/SECURITY.md):
+# çıktı üreten EN DÜŞÜK seviye olan verb 1 bile istemcinin gerçek genel
+# IP'sini 12 satırda logluyor ve bunların biri şu:
+#
+#   client1/203.0.113.9:53352 MULTI_sva: pool returned IPv4=10.77.0.2
+#
+# Bu satır gerçek IP'yi atanan tünel IP'siyle zaman damgalı olarak
+# eşleştirir; yani kullanıcıyı deanonimleştirmek için gereken kaydın ta
+# kendisidir. verb 0 hiçbir istemci satırı yazmaz ama çalışma zamanı
+# hatalarını (ör. "Socket bind failed ... Address already in use") hâlâ
+# gösterir; birim Type=notify olduğu için systemd hazır-olma tespiti de
+# log çıktısına bağlı değildir. İkisi de gerçek süreçle doğrulandı.
+verb 0
 explicit-exit-notify 1
 EOF
   chmod 600 "$out"
@@ -113,8 +129,30 @@ EOF
 render_openvpn_server_conf udp4 tun-udp "$UDP_PORT" 7505 "$SERVER_DIR/server-udp.conf"
 render_openvpn_server_conf tcp4-server tun-tcp "$TCP_PORT" 7506 "$SERVER_DIR/server-tcp.conf"
 
-systemctl enable --now openvpn-server@server-udp >/dev/null
-systemctl enable --now openvpn-server@server-tcp >/dev/null
+# Ubuntu'nun hazır birimi ExecStart içine bir --status dosyası gömer; o
+# dosya bağlı her istemcinin gerçek IP'sini tünel IP'siyle eşleştirir.
+# Drop-in ExecStart'ı --status olmadan yeniden tanımlar (ayrıntı ve ölçüm
+# için dosyanın kendi başlığına bakın).
+DROPIN=/etc/systemd/system/openvpn-server@.service.d/no-status.conf
+DROPIN_CHANGED=0
+install -d -m 755 /etc/systemd/system/openvpn-server@.service.d
+if ! cmp -s "$REPO_ROOT/systemd/openvpn-server-no-status.conf" "$DROPIN"; then
+  install -m 644 "$REPO_ROOT/systemd/openvpn-server-no-status.conf" "$DROPIN"
+  systemctl daemon-reload
+  DROPIN_CHANGED=1
+fi
+
+for inst in server-udp server-tcp; do
+  systemctl enable --now "openvpn-server@$inst" >/dev/null
+  # `enable --now` zaten çalışan bir servisi yeniden başlatmaz, dolayısıyla
+  # yükseltme sırasında eski süreç --status'lu ExecStart'la çalışmaya devam
+  # eder ve dosyayı yeniden yazar. Drop-in yeni geldiyse açıkça restart.
+  if [ "$DROPIN_CHANGED" = "1" ]; then
+    systemctl restart "openvpn-server@$inst" >/dev/null || \
+      log_warn "openvpn-server@$inst yeniden başlatılamadı; --status dosyası kalkması için elle restart edin."
+  fi
+  rm -f "/run/openvpn-server/status-$inst.log"
+done
 
 log_ok "OpenVPN UDP ($UDP_PORT) ve TCP ($TCP_PORT) servisleri etkin."
 log_info "PKI dizini: $EASYRSA_DIR — bunun config.json içindeki openvpn.easyRsaDir ile eşleştiğinden emin olun."

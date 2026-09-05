@@ -101,14 +101,19 @@ fi
 log_info "Anchor/kök güven noktası doğrulanıyor..."
 unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
 
-if unbound-checkconf >/tmp/unbound-checkconf.log 2>&1; then
+# Sabit bir /tmp yolu yerine mktemp: root olarak çalıştığımız için, yerel
+# bir kullanıcının önceden oluşturduğu sembolik bağ bu yazmayı istediği
+# dosyaya yönlendirebilirdi.
+CHECKCONF_LOG="$(mktemp)"
+if unbound-checkconf >"$CHECKCONF_LOG" 2>&1; then
   log_ok "unbound yapılandırması geçerli."
+  rm -f "$CHECKCONF_LOG"
 else
   log_err "unbound yapılandırması geçersiz:"
-  cat /tmp/unbound-checkconf.log
+  cat "$CHECKCONF_LOG"
+  rm -f "$CHECKCONF_LOG"
   exit 1
 fi
-rm -f /tmp/unbound-checkconf.log
 
 install -d -m 755 /etc/systemd/system/unbound.service.d
 install -m 644 ../systemd/unbound-after-tunnels.conf /etc/systemd/system/unbound.service.d/vpn-tunnel-order.conf

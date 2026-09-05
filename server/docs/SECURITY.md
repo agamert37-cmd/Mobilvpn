@@ -23,7 +23,8 @@ sınırındadır ve hepsi operatör tarafından kontrol edilir. Varsayımlar:
 |---|---|---|
 | nftables | (opsiyonel, varsayılan kapalı) hız sınırlı, kaynak/hedefsiz saldırı gürültüsü sayacı | Hiçbir tünel paketinin kaynağı/hedefi/içeriği |
 | WireGuard (çekirdek) | Hiçbir şey (kernel WireGuard trafik içeriği ya da hedef loglamaz) | — |
-| OpenVPN | `verb 3` — yalnızca bağlantı/hata olayları, systemd unit'in kendi `--status` dosyası (root-only, `/run` altında, kalıcı değil) | Trafik içeriği/hedefleri |
+| OpenVPN | `verb 0` — yalnızca çalışma zamanı hataları (ör. port çakışması); `--status` dosyası kaldırıldı | **İstemcinin gerçek IP'si**, tünel IP eşlemesi, ortak ad, bağlantı zamanı, trafik içeriği/hedefleri |
+| IKEv2 (charon) | `journal { default = -1 }` — hiçbir şey | IKE_SA kurulurken eşin gerçek IP'si ve kimliği |
 | unbound | `verbosity: 0`, `log-queries: no`, `log-replies: no`, `use-syslog: no` | Hiçbir DNS sorgusu |
 | vpn-api HTTP erişim logu | metod + yol + durum kodu + süre | **İstemci IP'si asla**, sorgu dizesi asla (bu yüzden `sessionId` taşıyan `GET /telemetry?sessionId=...` bile loglanmaz — `r.URL.Path` sorgu dizesini içermez) |
 | vpn-api oturum durumu (`state.json`) | genel anahtar/ortak ad, sanal IP, zaman damgaları (yalnızca süreç yeniden başlatıldığında peer'ları/sertifikaları öksüz bırakmamak için) | Trafik verisi, hedef, gerçek istemci IP'si |
@@ -31,6 +32,91 @@ sınırındadır ve hepsi operatör tarafından kontrol edilir. Varsayımlar:
 Bu **API-katmanı** loglama kararıdır ve gerekirse operatör kendi
 sorumluluğunda `vpn-api`'yi ayrıntılı loglama için değiştirebilir — ama
 varsayılan, ürünün "gizlilik" vaadini karşılayacak şekilde en az bilgidir.
+
+### Bu tablo neden ölçümle yazıldı
+
+Yukarıdaki satırlar varsayılan değerlerin "makul göründüğü" için değil,
+gerçek süreçlere karşı ölçüldüğü için böyle. İlk sürüm OpenVPN'i `verb 3`
+ile kuruyordu ve bu doküman onu "yalnızca bağlantı/hata olayları" diye
+tarif ediyordu. Bu **yanlıştı**.
+
+Gerçek bir `openvpn 2.6.19` sunucusuna bir istemci bağlanıp sunucu
+günlüğü seviye seviye sayıldığında:
+
+| verb | toplam satır | istemci IP'si içeren satır |
+|---|---|---|
+| 0 | 0 | 0 |
+| 1 | 24 | 12 |
+| 2 | 31 | 18 |
+| 3 (eski varsayılan) | 42 | 23 |
+
+Çıktı üreten en düşük seviye olan `verb 1`'de bile şu satırlar yazılıyor:
+
+```
+203.0.113.9:53352 [client1] Peer Connection Initiated with [AF_INET]203.0.113.9:53352
+client1/203.0.113.9:53352 MULTI_sva: pool returned IPv4=10.77.0.2
+```
+
+İkinci satır, kullanıcının **gerçek genel IP'sini atanan tünel IP'siyle**
+zaman damgalı olarak eşleştirir. Tünel IP'si üzerinden tutulan herhangi
+bir kayıtla birleştirildiğinde tam kimliklendirme sağlar — yani bir
+no-logs VPN'in tutmaması gereken kaydın tam olarak kendisi.
+
+`verb 0` hiçbir istemci satırı yazmaz ama çalışma zamanı hatalarını
+göstermeye devam eder (ölçüldü — port çakışmasında `TCP/UDP: Socket bind
+failed on local address ...: Address already in use`), ve birim
+`Type=notify` olduğu için systemd'nin hazır-olma tespiti log çıktısına
+bağlı değildir.
+
+### `--status` dosyası: Ubuntu biriminin gömdüğü sızıntı
+
+Ubuntu'nun hazır `openvpn-server@.service` birimi ExecStart'a bir durum
+dosyası gömer:
+
+```
+ExecStart=/usr/sbin/openvpn --status %t/openvpn-server/status-%i.log \
+          --status-version 2 --suppress-timestamps --config %i.conf
+```
+
+Bağlı bir istemciyle bu dosyanın içeriği ölçüldü:
+
+```
+CLIENT_LIST,client1,203.0.113.9:43271,10.77.0.2,,3142,3148,2026-09-05 21:47:14,...
+ROUTING_TABLE,10.77.0.2,client1,203.0.113.9:43271,2026-09-05 21:47:14,...
+```
+
+Gerçek IP ↔ tünel IP ↔ ortak ad ↔ bağlantı zamanı. `/run` altında olduğu
+için yeniden başlatmayı atlatmaz, ama makinenin tüm çalışma süresi
+boyunca okunabilir durumdadır.
+
+`scripts/30-openvpn-setup.sh` bu yüzden bir systemd drop-in kurar
+(`/etc/systemd/system/openvpn-server@.service.d/no-status.conf`) ve
+ExecStart'ı `--status` olmadan yeniden tanımlar.
+
+**Telemetri bundan etkilenmez.** `vpn-api` bu dosyayı hiç okumaz;
+management soketine `status 2` gönderir. Gerçek bir daemon'a karşı
+doğrulandı: `--status` hiç verilmediğinde bile management soketi bayt
+sayaçlarını döndürmeye devam ediyor, dolayısıyla `/api/v1/telemetry`
+çalışmaya devam eder.
+
+### charon (IKEv2) günlük seviyesi
+
+strongSwan'ın varsayılan journal seviyesi (`default = 1`) IKE_SA
+kurulurken eşin gerçek IP'sini ve kimliğini yazar. `35-ikev2-setup.sh`
+bunu `-1`'e (tamamen sessiz) çeker. Ölçüldü (strongSwan 5.9.13, aynı
+açılış): `default = 1` → 24 satır, `default = -1` → 0 satır.
+
+Sorun ayıklamak için geçici olarak `VPN_IKEV2_LOGLEVEL=1` ile
+kurulabilir; bunun bedeli, o süre boyunca eş IP'lerinin yeniden
+loglanmasıdır.
+
+### Denetleme
+
+`scripts/verify.sh` bunların hepsini canlı kurulumda tekrar kontrol eder
+(OpenVPN verb seviyesi, drop-in'in varlığı, `/run` altında gerçek IP
+içeren bir durum dosyası kalıp kalmadığı, charon seviyesi, unbound'un
+sorgu loglaması), böylece bir yükseltme ya da elle düzenleme gizlilik
+duruşunu sessizce bozarsa fark edilir.
 
 ## OpenVPN management arayüzü: neden parola korumalı
 

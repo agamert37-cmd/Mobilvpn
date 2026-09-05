@@ -84,6 +84,32 @@ cat > "$SWAN_DIR/conf.d/00-mobilvpn-base.conf" <<EOF
 # this file and removed again on disconnect.
 EOF
 
+# charon'un günlük seviyesi. Varsayılan (1), IKE_SA kurulurken eşin gerçek
+# IP'sini ve kimliğini journal'a yazar — WireGuard/OpenVPN tarafında
+# kapattığımız kaydın aynısı. -1 tamamen sessizdir.
+#
+# Ölçüm (bu depoda, strongSwan 5.9.13): aynı charon açılışı filelog ile
+# default=1'de 24 satır, default=-1'de 0 satır üretti. journal logger'ı da
+# aynı seviye mekanizmasını kullanır.
+#
+# Sorun ayıklarken geçici olarak yükseltin (VPN_IKEV2_LOGLEVEL=1); bunun
+# bedeli, o süre boyunca eş IP'lerinin yeniden loglanmasıdır.
+IKEV2_LOGLEVEL="${VPN_IKEV2_LOGLEVEL:--1}"
+cat > /etc/strongswan.d/charon-systemd.conf <<EOF
+# Managed by scripts/35-ikev2-setup.sh — bkz. docs/SECURITY.md.
+charon-systemd {
+    journal {
+        default = $IKEV2_LOGLEVEL
+    }
+}
+EOF
+chmod 644 /etc/strongswan.d/charon-systemd.conf
+if [ "$IKEV2_LOGLEVEL" = "-1" ]; then
+  log_ok "charon günlükleme kapatıldı (eş IP'leri journal'a yazılmaz)."
+else
+  log_warn "charon günlük seviyesi $IKEV2_LOGLEVEL — bu seviyede eş IP'leri loglanır."
+fi
+
 systemctl enable --now strongswan.service >/dev/null
 swanctl --load-all --noprompt >/dev/null 2>&1 || log_warn "swanctl --load-all şimdilik başarısız; servis başladıktan sonra tekrar denenecek."
 

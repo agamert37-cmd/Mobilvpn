@@ -329,6 +329,57 @@ if [ "$VPN_CFG_TLS_ENABLED" = "true" ]; then
   fi
 fi
 
+section "Gizlilik (no-logs)"
+# Bu bölüm ürünün gizlilik vaadini denetler: hiçbir bileşen istemcinin
+# gerçek IP'sini kalıcı ya da okunabilir bir yere yazmamalı. Ölçümler ve
+# gerekçe için docs/SECURITY.md.
+
+OVPN_SERVER_DIR="${VPN_CFG_OVPN_SERVERDIR:-/etc/openvpn/server}"
+for conf in "$OVPN_SERVER_DIR"/server-udp.conf "$OVPN_SERVER_DIR"/server-tcp.conf; do
+  [ -f "$conf" ] || continue
+  VERB="$(awk '/^[[:space:]]*verb[[:space:]]+[0-9]+/ {print $2}' "$conf" | tail -n1)"
+  if [ "${VERB:-3}" = "0" ]; then
+    ok "$(basename "$conf"): verb 0 (istemci IP'si loglanmıyor)"
+  else
+    bad "$(basename "$conf"): verb ${VERB:-ayarsız} — bu seviye istemcinin gerçek IP'sini tünel IP'siyle eşleştirip loglar (verb 0 olmalı)"
+  fi
+done
+
+# Ubuntu'nun hazır birimi ExecStart'a bir --status dosyası gömer; drop-in
+# onu kaldırır. Hem drop-in'i hem de dosyanın gerçekten yokluğunu kontrol
+# ediyoruz: biri olmadan diğeri yanıltıcı olurdu.
+if [ -f /etc/systemd/system/openvpn-server@.service.d/no-status.conf ]; then
+  ok "openvpn --status drop-in'i kurulu"
+else
+  bad "openvpn --status drop-in'i yok — birim, gerçek IP ↔ tünel IP eşlemesi içeren bir durum dosyası yazıyor olabilir (30-openvpn-setup.sh yeniden çalıştırın)"
+fi
+LEAKY_STATUS=0
+for f in /run/openvpn-server/status-*.log; do
+  [ -f "$f" ] || continue
+  if grep -qE '^(CLIENT_LIST|ROUTING_TABLE),' "$f" 2>/dev/null; then
+    bad "$f bağlı istemcilerin gerçek IP'lerini içeriyor — birim hâlâ --status ile çalışıyor (systemctl restart openvpn-server@server-udp openvpn-server@server-tcp)"
+    LEAKY_STATUS=1
+  fi
+done
+[ "$LEAKY_STATUS" -eq 0 ] && ok "gerçek IP içeren OpenVPN durum dosyası yok"
+
+if [ "${VPN_CFG_IKEV2_ENABLED:-false}" = "true" ]; then
+  IKE_LVL="$(awk '/^[[:space:]]*default[[:space:]]*=/ {print $3}' /etc/strongswan.d/charon-systemd.conf 2>/dev/null | tail -n1)"
+  if [ "${IKE_LVL:-1}" = "-1" ]; then
+    ok "charon günlükleme kapalı (eş IP'leri journal'a yazılmıyor)"
+  else
+    warn "charon günlük seviyesi ${IKE_LVL:-varsayılan 1} — bu seviyede IKE_SA kurulurken eş IP'si loglanır (VPN_IKEV2_LOGLEVEL=-1 ile 35-ikev2-setup.sh)"
+  fi
+fi
+
+for opt in log-queries log-replies; do
+  if grep -rqs "$opt: no" /etc/unbound/unbound.conf.d/; then
+    ok "unbound $opt: no"
+  else
+    bad "unbound $opt kapalı değil — DNS sorguları loglanıyor olabilir"
+  fi
+done
+
 section "Özet"
 printf '  %d geçti, %d uyarı, %d başarısız\n\n' "$PASS" "$WARN" "$FAIL"
 if [ "$FAIL" -gt 0 ]; then

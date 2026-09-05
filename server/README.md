@@ -153,6 +153,7 @@ Her betik, makul varsayılanlarla çalışır ama şunları özelleştirebilirsi
 | `VPN_WG_SUBNET_V6` | `fd00:66::/64` | Tünelin IPv6 (ULA) öneki |
 | `VPN_ENABLE_IKEV2` | `0` | IKEv2/IPsec kurulumu (`install.sh --with-ikev2` ile aynı) |
 | `VPN_IKEV2_SUBNET` | `10.88.0.0/16` | IKEv2 istemcilerinin tünel alt ağı |
+| `VPN_IKEV2_LOGLEVEL` | `-1` (sessiz) | charon günlük seviyesi. `-1` dışındaki her değer IKE_SA kurulurken **eşin gerçek IP'sini** journal'a yazar; yalnızca sorun ayıklarken geçici olarak yükseltin |
 
 Betikler ayrıca tek tek de çalıştırılabilir (`scripts/00-prereqs.sh`, ...),
 tümü idempotenttir (ikinci çalıştırma güvenlidir).
