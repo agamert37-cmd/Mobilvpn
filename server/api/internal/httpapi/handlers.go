@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
 
+	"vpnapi/internal/ipam"
 	"vpnapi/internal/openvpn"
 	"vpnapi/internal/session"
 	"vpnapi/internal/wireguard"
@@ -148,7 +150,24 @@ func (a *App) connectWireGuard(w http.ResponseWriter, r *http.Request, req Conne
 		return
 	}
 
-	if err := a.wg.AddPeer(r.Context(), clientPub, virtualIP.String()+"/32"); err != nil {
+	// On a dual-stack tunnel the peer gets a paired v6 address derived from
+	// its v4 one, and both are pinned as its allowed-ips so it can neither
+	// spoof nor reach another client on either family.
+	var virtualIPv6 net.IP
+	allowedForPeer := virtualIP.String() + "/32"
+	if a.cfg.WireGuard.IPv6Enabled {
+		v6, err := ipam.DeriveIPv6(virtualIP, a.cfg.WireGuard.SubnetCIDRv6)
+		if err != nil {
+			a.wgPool.Release(virtualIP)
+			a.logger.Error("deriving IPv6 tunnel address failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "IPv6 tünel adresi türetilemedi.")
+			return
+		}
+		virtualIPv6 = v6
+		allowedForPeer += "," + v6.String() + "/128"
+	}
+
+	if err := a.wg.AddPeer(r.Context(), clientPub, allowedForPeer); err != nil {
 		a.wgPool.Release(virtualIP)
 		a.logger.Error("wireguard AddPeer failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, ConnectResponseDto{
@@ -168,9 +187,17 @@ func (a *App) connectWireGuard(w http.ResponseWriter, r *http.Request, req Conne
 		a.logger.Warn("persisting session state failed", "error", err)
 	}
 
-	allowedIps := "0.0.0.0/0, ::/0"
+	// Only advertise ::/0 when this node can actually carry IPv6 — telling a
+	// client to route v6 into a v4-only tunnel black-holes it.
+	allowedIps := "0.0.0.0/0"
+	if a.cfg.WireGuard.IPv6Enabled {
+		allowedIps += ", ::/0"
+	}
 	if a.policy.SplitTunneling() {
 		allowedIps = a.cfg.WireGuard.SubnetCIDR
+		if a.cfg.WireGuard.IPv6Enabled {
+			allowedIps += ", " + a.cfg.WireGuard.SubnetCIDRv6
+		}
 	}
 
 	writeJSON(w, http.StatusOK, ConnectResponseDto{
@@ -183,6 +210,7 @@ func (a *App) connectWireGuard(w http.ResponseWriter, r *http.Request, req Conne
 		HandshakeDurationMs:        time.Since(started).Milliseconds(),
 		Message:                    "WireGuard tüneli sunucu tarafında kuruldu.",
 		Protocol:                   string(session.ProtocolWireGuard),
+		VirtualIPv6:                ipStringOrEmpty(virtualIPv6),
 		ServerPublicKey:            a.wgPub,
 		ClientPrivateKey:           clientPriv,
 		Endpoint:                   fmt.Sprintf("%s:%d", a.cfg.PublicEndpointHost, a.cfg.WireGuard.ListenPort),

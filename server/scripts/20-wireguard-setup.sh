@@ -14,6 +14,8 @@ WG_DIR=/etc/wireguard
 WG_IFACE="${VPN_WG_IFACE:-wg0}"
 WG_PORT="${VPN_WG_PORT:-51820}"
 WG_ADDRESS="${VPN_WG_ADDRESS:-10.66.0.1/16}"
+WG_ADDRESS_V6="${VPN_WG_ADDRESS_V6:-fd00:66::1/64}"
+IPV6_SUPPORTED="$(detect_ipv6_support)"
 
 install -d -m 700 "$WG_DIR"
 
@@ -39,6 +41,17 @@ chmod 644 "$PUB_KEY_FILE"
 
 PRIVATE_KEY="$(cat "$PRIV_KEY_FILE")"
 
+# Çift yığın yalnızca ana bilgisayarın gerçekten global IPv6'sı varsa
+# açılır: olmayan bir yukarı akışa ::/0 reklam etmek istemcinin IPv6
+# trafiğini kara deliğe yollar.
+ADDRESS_LINE="Address = $WG_ADDRESS"
+if [ "$IPV6_SUPPORTED" = "1" ]; then
+  ADDRESS_LINE="Address = $WG_ADDRESS, $WG_ADDRESS_V6"
+  log_info "Global IPv6 tespit edildi; tünel çift yığın (dual-stack) kurulacak."
+else
+  log_warn "Global IPv6 yok; tünel yalnızca IPv4 olacak (bkz. docs/SECURITY.md - IPv6 sızıntısı)."
+fi
+
 WG_CONF="$WG_DIR/$WG_IFACE.conf"
 log_info "Yazılıyor: $WG_CONF"
 cat > "$WG_CONF" <<EOF
@@ -47,7 +60,7 @@ cat > "$WG_CONF" <<EOF
 # olarak yönetilir. NAT/forward kuralları da burada değil,
 # scripts/40-nftables-firewall.sh tarafından ayrı yönetilir.
 [Interface]
-Address = $WG_ADDRESS
+$ADDRESS_LINE
 ListenPort = $WG_PORT
 PrivateKey = $PRIVATE_KEY
 SaveConfig = false

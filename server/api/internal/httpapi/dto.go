@@ -48,7 +48,10 @@ type ConnectResponseDto struct {
 	Message             string `json:"message,omitempty"`
 
 	// --- Additive (ignored by the current app build) ---
-	Protocol                   string   `json:"protocol,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+	// VirtualIPv6 is only present on a dual-stack node; the client contract
+	// has a single virtualIp field, so the v6 half travels as an addition.
+	VirtualIPv6                string   `json:"virtualIpv6,omitempty"`
 	ServerPublicKey            string   `json:"serverPublicKey,omitempty"`
 	ClientPrivateKey           string   `json:"clientPrivateKey,omitempty"`
 	Endpoint                   string   `json:"endpoint,omitempty"`

@@ -69,10 +69,11 @@ Yanıt (`ConnectResponseDto` + ek alanlar), WireGuard başarılı olduğunda:
   "message": "WireGuard tüneli sunucu tarafında kuruldu.",
 
   "protocol": "WIREGUARD",
+  "virtualIpv6": "fd00:66::a42:2 (yalnızca çift yığın düğümlerde)",
   "serverPublicKey": "base64-server-pubkey",
   "clientPrivateKey": "base64-client-privkey (yalnızca bootstrap modunda)",
   "endpoint": "vpn.example.com:51820",
-  "allowedIps": "0.0.0.0/0, ::/0",
+  "allowedIps": "0.0.0.0/0, ::/0",   // v4-only düğümde yalnızca "0.0.0.0/0"
   "dns": ["10.66.0.1"],
   "mtu": 1420,
   "persistentKeepaliveSeconds": 25

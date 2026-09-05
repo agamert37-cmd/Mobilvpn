@@ -380,6 +380,13 @@ func readManagementPassword(path string, logger *slog.Logger) string {
 	return strings.TrimSpace(string(data))
 }
 
+func ipStringOrEmpty(ip net.IP) string {
+	if ip == nil {
+		return ""
+	}
+	return ip.String()
+}
+
 // netmaskOf renders a CIDR's mask in dotted-decimal form, as OpenVPN's
 // client-config-dir `ifconfig-push <ip> <netmask>` directive expects.
 func netmaskOf(cidr string) string {

@@ -88,7 +88,8 @@ Her betik, makul varsayılanlarla çalışır ama şunları özelleştirebilirsi
 | `VPN_WG_PORT` / `VPN_WG_SUBNET` | `51820` / `10.66.0.0/16` | WireGuard dinleme portu ve tünel alt ağı |
 | `VPN_OVPN_UDP_PORT` / `VPN_OVPN_TCP_PORT` | `1194` / `443` | OpenVPN portları |
 | `VPN_WAN_IFACE` | otomatik algılanır | NAT/masquerade için WAN arayüzü |
-| `VPN_ENABLE_IPV6_FORWARDING` | `0` | IPv6 yönlendirmesi — bkz. docs/SECURITY.md'deki sızıntı notu |
+| `VPN_ENABLE_IPV6` | otomatik algılanır | Çift yığın tünel. Ana bilgisayarda global IPv6 varsa açılır (IPv6 sızıntısını kapatır); yoksa hiç açılmaz. `1`/`0` ile zorlanabilir |
+| `VPN_WG_SUBNET_V6` | `fd00:66::/64` | Tünelin IPv6 (ULA) öneki |
 
 Betikler ayrıca tek tek de çalıştırılabilir (`scripts/00-prereqs.sh`, ...),
 tümü idempotenttir (ikinci çalıştırma güvenlidir).
@@ -151,8 +152,9 @@ curl http://127.0.0.1:8080/api/v1/health
   yalnızca istemcinin görmezden geldiği ek/opsiyonel alanlar eklenmiştir — bkz.
   docs/API.md).
 - IKEv2/IPsec desteklenmiyor (yol haritası — bkz. docs/ARCHITECTURE.md).
-- IPv6 tüneli bu sürümde yok; istemci cihazın yerel IPv6 bağlantısı VPN dışından
-  sızabilir (bkz. docs/SECURITY.md).
+- IPv6 tüneli, ana bilgisayarın global IPv6 bağlantısı varsa otomatik olarak
+  açılır ve IPv6 sızıntısını kapatır; yoksa hiçbir yerde `::/0` reklam
+  edilmez ve sızıntı istemci tarafında çözülmelidir (bkz. docs/SECURITY.md).
 - Çok düğümlü (fleet) mimari uygulanmıştır ama gerçek coğrafi dağıtım/DNS
   tabanlı yönlendirme operatörün kendi sorumluluğundadır; bu depo tek bir
   düğümü sıfır yapılandırmayla, birden fazla düğümü `config/nodes.example.json`

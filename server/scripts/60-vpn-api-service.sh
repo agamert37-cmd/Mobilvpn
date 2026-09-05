@@ -19,6 +19,12 @@ WG_IFACE="${VPN_WG_IFACE:-wg0}"
 WG_PORT="${VPN_WG_PORT:-51820}"
 WG_SUBNET="${VPN_WG_SUBNET:-10.66.0.0/16}"
 WG_GATEWAY="${VPN_WG_GATEWAY:-10.66.0.1}"
+WG_SUBNET_V6="${VPN_WG_SUBNET_V6:-fd00:66::/64}"
+WG_GATEWAY_V6="${VPN_WG_GATEWAY_V6:-fd00:66::1}"
+# Bu, 20-wireguard-setup.sh'ın wg0'a bir IPv6 adresi verip vermediğiyle
+# aynı testtir; ikisi ayrışırsa API, taşınamayan bir rotayı reklam eder.
+IPV6_ENABLED="false"
+[ "$(detect_ipv6_support)" = "1" ] && IPV6_ENABLED="true"
 OVPN_UDP_PORT="${VPN_OVPN_UDP_PORT:-1194}"
 OVPN_TCP_PORT="${VPN_OVPN_TCP_PORT:-443}"
 OVPN_SUBNET="${VPN_OVPN_SUBNET:-10.77.0.0/16}"
@@ -54,6 +60,9 @@ else
     "WG_PORT=$WG_PORT" \
     "WG_SUBNET=$WG_SUBNET" \
     "WG_GATEWAY=$WG_GATEWAY" \
+    "WG_SUBNET_V6=$WG_SUBNET_V6" \
+    "WG_GATEWAY_V6=$WG_GATEWAY_V6" \
+    "IPV6_ENABLED=$IPV6_ENABLED" \
     "OVPN_UDP_PORT=$OVPN_UDP_PORT" \
     "OVPN_TCP_PORT=$OVPN_TCP_PORT" \
     "OVPN_SUBNET=$OVPN_SUBNET" \

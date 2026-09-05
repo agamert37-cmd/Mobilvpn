@@ -10,7 +10,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 require_root
 
-ENABLE_IPV6_FORWARDING="${VPN_ENABLE_IPV6_FORWARDING:-0}"
+# Aynı algılamayı 20-wireguard-setup.sh ve 60-vpn-api-service.sh de
+# kullanır: üçü ayrışırsa tünelde IPv6 adresi olup yönlendirme olmaz (ya da
+# tersi) ve trafik sessizce kaybolur.
+ENABLE_IPV6_FORWARDING="${VPN_ENABLE_IPV6_FORWARDING:-$(detect_ipv6_support)}"
 
 SYSCTL_FILE=/etc/sysctl.d/99-vpn-tunnel.conf
 log_info "Yazılıyor: $SYSCTL_FILE"
@@ -92,6 +95,8 @@ else
 fi
 
 if [ "$ENABLE_IPV6_FORWARDING" = "0" ]; then
-  log_warn "IPv6 yönlendirme kapalı bırakıldı (varsayılan). Bu sürüm istemcilere yalnızca IPv4 tüneli sağlar;"
-  log_warn "istemci cihazların yerel IPv6 bağlantısı varsa bunu VPN dışından sızdırabilir. Ayrıntı için docs/SECURITY.md."
+  log_warn "Bu ana bilgisayarda global IPv6 tespit edilmedi; tünel yalnızca IPv4 taşıyacak."
+  log_warn "İstemci cihazın yerel IPv6 bağlantısı varsa bunu VPN dışından sızdırabilir (docs/SECURITY.md)."
+else
+  log_ok "IPv6 yönlendirme etkin; tünel çift yığın olacak ve IPv6 sızıntısı kapanacak."
 fi

@@ -26,6 +26,7 @@ define OVPN_TCP_PORT = @@OVPN_TCP_PORT@@
 define API_PUBLIC_PORT = @@API_PUBLIC_PORT@@
 define TUNNEL_IFACES = { "@@WG_IFACE@@", "@@OVPN_UDP_DEV@@", "@@OVPN_TCP_DEV@@" }
 define TUNNEL_SUBNETS = { @@WG_SUBNET@@, @@OVPN_SUBNET@@ }
+define TUNNEL_SUBNETS_V6 = { @@WG_SUBNET_V6@@ }
 
 table inet filter {
   chain input {
@@ -65,8 +66,10 @@ table inet filter {
     # Explicit client isolation: no tunnel subnet may ever reach another
     # tunnel subnet, stated before the WAN-egress accept rules so the
     # intent survives future edits even though the default policy already
-    # implies it.
+    # implies it. Both families, or a dual-stack client could simply hop
+    # over to IPv6 to reach a peer the v4 rule blocks.
     ip saddr $TUNNEL_SUBNETS ip daddr $TUNNEL_SUBNETS drop
+    ip6 saddr $TUNNEL_SUBNETS_V6 ip6 daddr $TUNNEL_SUBNETS_V6 drop
 
     # Force every tunnel client's DNS through our own resolver: legitimate
     # queries to it terminate in the `input` chain above (destined at this
@@ -88,5 +91,9 @@ table inet nat {
   chain postrouting {
     type nat hook postrouting priority 100;
     ip saddr $TUNNEL_SUBNETS oifname $WAN_IFACE masquerade
+    # NAT66 for the ULA tunnel prefix. Harmless when the node is v4-only:
+    # nothing ever carries a source address from this prefix, so the rule
+    # simply never matches.
+    ip6 saddr $TUNNEL_SUBNETS_V6 oifname $WAN_IFACE masquerade
   }
 }

@@ -83,3 +83,23 @@ render_template() {
 package_installed() {
   dpkg -s "$1" >/dev/null 2>&1
 }
+
+# detect_ipv6_support echoes 1 when this host actually has usable global
+# IPv6 (a global-scope address AND a default route), else 0.
+#
+# This gates dual-stack tunnelling, and getting it wrong is worse than
+# leaving IPv6 off: advertising ::/0 to clients on a host that can't route
+# it black-holes their IPv6 traffic, while leaving it off merely leaves the
+# documented leak in place. So the test is deliberately strict.
+detect_ipv6_support() {
+  if [ -n "${VPN_ENABLE_IPV6:-}" ]; then
+    echo "$VPN_ENABLE_IPV6"
+    return
+  fi
+  if ip -6 addr show scope global 2>/dev/null | grep -q "inet6" &&
+    ip -6 route show default 2>/dev/null | grep -q "default"; then
+    echo 1
+  else
+    echo 0
+  fi
+}

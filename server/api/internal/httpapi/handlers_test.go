@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,6 +196,68 @@ func TestHandleConnectWireGuardBringYourOwnKey(t *testing.T) {
 	fw.mu.Unlock()
 	if !peered {
 		t.Fatalf("the exact client-supplied public key should have been added as the wg peer")
+	}
+}
+
+func TestHandleConnectIPv4OnlyDoesNotAdvertiseV6Route(t *testing.T) {
+	// The default (v4-only) node must not tell a client to route ::/0 into
+	// a tunnel that can't carry it — that black-holes the client's IPv6.
+	app, fw, _ := newTestApp(t, nil)
+	srv := httptest.NewServer(app.Routes())
+	defer srv.Close()
+
+	_, body := doJSON(t, srv, http.MethodPost, "/api/v1/connect", ConnectRequestDto{
+		ServerID: "test_node", Protocol: "WIREGUARD",
+	})
+	var out ConnectResponseDto
+	mustDecode(t, body, &out)
+
+	if out.AllowedIps != "0.0.0.0/0" {
+		t.Fatalf("AllowedIps = %q on a v4-only node, want exactly \"0.0.0.0/0\"", out.AllowedIps)
+	}
+	if out.VirtualIPv6 != "" {
+		t.Fatalf("VirtualIPv6 = %q on a v4-only node, want empty", out.VirtualIPv6)
+	}
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+	for _, allowed := range fw.peers {
+		if strings.Contains(allowed, "/128") {
+			t.Fatalf("peer allowed-ips = %q on a v4-only node, should carry no IPv6", allowed)
+		}
+	}
+}
+
+func TestHandleConnectDualStackAssignsPairedV6Address(t *testing.T) {
+	app, fw, _ := newTestApp(t, func(cfg *config.Config) {
+		cfg.WireGuard.IPv6Enabled = true
+		cfg.WireGuard.SubnetCIDRv6 = "fd00:66::/64"
+	})
+	srv := httptest.NewServer(app.Routes())
+	defer srv.Close()
+
+	_, body := doJSON(t, srv, http.MethodPost, "/api/v1/connect", ConnectRequestDto{
+		ServerID: "test_node", Protocol: "WIREGUARD",
+	})
+	var out ConnectResponseDto
+	mustDecode(t, body, &out)
+
+	if !strings.Contains(out.AllowedIps, "::/0") {
+		t.Errorf("AllowedIps = %q on a dual-stack node, want it to include ::/0", out.AllowedIps)
+	}
+	derived, err := ipam.DeriveIPv6(net.ParseIP(out.VirtualIP), "fd00:66::/64")
+	if err != nil {
+		t.Fatalf("deriving the expected v6 address: %v", err)
+	}
+	if out.VirtualIPv6 != derived.String() {
+		t.Errorf("VirtualIPv6 = %q, want %q (paired with %s)", out.VirtualIPv6, derived, out.VirtualIP)
+	}
+
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+	for _, allowed := range fw.peers {
+		if !strings.Contains(allowed, "/32") || !strings.Contains(allowed, "/128") {
+			t.Fatalf("peer allowed-ips = %q, want both the v4 /32 and the v6 /128 pinned", allowed)
+		}
 	}
 }
 

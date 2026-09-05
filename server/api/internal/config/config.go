@@ -14,11 +14,20 @@ import (
 )
 
 type WireGuardConfig struct {
-	Enabled             bool     `json:"enabled"`
-	Interface           string   `json:"interface"`
-	ListenPort          int      `json:"listenPort"`
-	SubnetCIDR          string   `json:"subnetCIDR"`
-	ServerVirtualIP     string   `json:"serverVirtualIP"`
+	Enabled         bool   `json:"enabled"`
+	Interface       string `json:"interface"`
+	ListenPort      int    `json:"listenPort"`
+	SubnetCIDR      string `json:"subnetCIDR"`
+	ServerVirtualIP string `json:"serverVirtualIP"`
+	// IPv6Enabled turns the tunnel dual-stack. Leave it off unless the host
+	// actually has working upstream IPv6: advertising ::/0 to clients on a
+	// host that can't route it black-holes their IPv6 traffic. When it IS
+	// on, it closes the IPv6 leak where a dual-stack client would otherwise
+	// send v6 traffic around the tunnel with its real address
+	// (scripts/20-wireguard-setup.sh autodetects and sets this).
+	IPv6Enabled         bool     `json:"ipv6Enabled"`
+	SubnetCIDRv6        string   `json:"subnetCIDRv6"`
+	ServerVirtualIPv6   string   `json:"serverVirtualIPv6"`
 	DNS                 []string `json:"dns"`
 	MTU                 int      `json:"mtu"`
 	PersistentKeepalive int      `json:"persistentKeepaliveSeconds"`
@@ -116,6 +125,9 @@ func Default() Config {
 			ListenPort:          51820,
 			SubnetCIDR:          "10.66.0.0/16",
 			ServerVirtualIP:     "10.66.0.1",
+			IPv6Enabled:         false,
+			SubnetCIDRv6:        "fd00:66::/64",
+			ServerVirtualIPv6:   "fd00:66::1",
 			DNS:                 []string{"10.66.0.1"},
 			MTU:                 1420,
 			PersistentKeepalive: 25,

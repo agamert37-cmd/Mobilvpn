@@ -14,7 +14,10 @@ require_root
 WG_RESOLVER_IP="${VPN_WG_RESOLVER_IP:-10.66.0.1}"
 OVPN_RESOLVER_IP="${VPN_OVPN_RESOLVER_IP:-10.77.0.1}"
 WG_SUBNET="${VPN_WG_SUBNET:-10.66.0.0/16}"
+WG_SUBNET_V6="${VPN_WG_SUBNET_V6:-fd00:66::/64}"
+WG_RESOLVER_IP_V6="${VPN_WG_RESOLVER_IP_V6:-fd00:66::1}"
 OVPN_SUBNET="${VPN_OVPN_SUBNET:-10.77.0.0/16}"
+IPV6_SUPPORTED="$(detect_ipv6_support)"
 UPSTREAM_DOT="${VPN_DOT_UPSTREAMS:-1.1.1.1@853#cloudflare-dns.com 9.9.9.9@853#dns.quad9.net}"
 
 CONF_DIR=/etc/unbound/unbound.conf.d
@@ -27,13 +30,26 @@ log_info "Yazılıyor: $CONF_DIR/vpn-tunnel.conf"
   echo "  interface: $WG_RESOLVER_IP"
   echo "  interface: $OVPN_RESOLVER_IP"
   echo "  interface: 127.0.0.1"
+  if [ "$IPV6_SUPPORTED" = "1" ]; then
+    # Çift yığın tünelde istemciler çözümleyiciye IPv6 üzerinden de
+    # ulaşabilmeli; aksi halde v6-öncelikli bir istemci DNS'siz kalır.
+    echo "  interface: $WG_RESOLVER_IP_V6"
+  fi
   echo "  port: 53"
   echo "  do-ip4: yes"
-  echo "  do-ip6: no"
+  if [ "$IPV6_SUPPORTED" = "1" ]; then
+    echo "  do-ip6: yes"
+  else
+    echo "  do-ip6: no"
+  fi
   echo "  access-control: 127.0.0.0/8 allow"
   echo "  access-control: $WG_SUBNET allow"
   echo "  access-control: $OVPN_SUBNET allow"
   echo "  access-control: 0.0.0.0/0 refuse"
+  if [ "$IPV6_SUPPORTED" = "1" ]; then
+    echo "  access-control: $WG_SUBNET_V6 allow"
+  fi
+  echo "  access-control: ::/0 refuse"
   echo
   echo "  # Gizlilik: no-logs politikası — hiçbir sorgu diske yazılmaz."
   echo "  verbosity: 0"

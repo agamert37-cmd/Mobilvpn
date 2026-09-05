@@ -137,6 +137,38 @@ func (p *Pool) Capacity() int {
 	return int(p.numHosts) - 1
 }
 
+// DeriveIPv6 maps an allocated IPv4 tunnel address into the server's IPv6
+// tunnel prefix by embedding it in the low 32 bits (10.66.0.2 inside
+// fd00:66::/64 becomes fd00:66::a42:2).
+//
+// Deriving rather than allocating separately is deliberate: the v4 address
+// is already unique per session, so the paired v6 address inherits that
+// uniqueness for free, with no second allocator to keep in sync and no way
+// for the two pools to disagree about who owns what.
+func DeriveIPv6(v4 net.IP, prefixCIDR string) (net.IP, error) {
+	four := v4.To4()
+	if four == nil {
+		return nil, fmt.Errorf("ipam: %q is not an IPv4 address", v4)
+	}
+	_, ipnet, err := net.ParseCIDR(prefixCIDR)
+	if err != nil {
+		return nil, fmt.Errorf("ipam: invalid IPv6 prefix %q: %w", prefixCIDR, err)
+	}
+	base := ipnet.IP.To16()
+	if base == nil || ipnet.IP.To4() != nil {
+		return nil, fmt.Errorf("ipam: %q is not an IPv6 prefix", prefixCIDR)
+	}
+	ones, _ := ipnet.Mask.Size()
+	if ones > 96 {
+		return nil, fmt.Errorf("ipam: IPv6 prefix %q is too small to embed an IPv4 address (need /96 or shorter)", prefixCIDR)
+	}
+
+	out := make(net.IP, net.IPv6len)
+	copy(out, base)
+	copy(out[12:], four)
+	return out, nil
+}
+
 func ipToUint32(ip net.IP) uint32 {
 	return binary.BigEndian.Uint32(ip.To4())
 }

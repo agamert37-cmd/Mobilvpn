@@ -69,15 +69,24 @@ sunucu:  >INFO:OpenVPN Management Interface Version 5 ...
   kullanıcıya `AmbientCapabilities` ile vermek, PKI dizinlerini o kullanıcıya
   devretmek) mümkün ama bu depo kapsamında bir sonraki sertleştirme adımı
   olarak bırakıldı.
-- **IPv6 tüneli yok.** `10-sysctl-tuning.sh` varsayılan olarak
-  `net.ipv6.conf.all.forwarding=0` bırakır. Bir istemci cihazın **yerel**
-  IPv6 bağlantısı varsa (VPN'in dışında), bu IPv6 trafiği tünelin dışından
-  gerçek adresle gidebilir — klasik bir "IPv6 sızıntısı". Bunu tam olarak
-  kapatmak, çift-yığın (dual-stack) bir tünel + istemci tarafında IPv6'yı
-  devre dışı bırakma/kill-switch (Android `VpnService.Builder` seviyesinde,
-  bu depronun kapsamındaki sunucu tarafı değil) gerektirir. `VPN_ENABLE_
-  IPV6_FORWARDING=1` ile açılabilir ama istemci tarafı desteği eklenene
-  kadar önerilmez.
+- **IPv6, ana bilgisayarın bağlantısına göre otomatik.** Kurulum betikleri
+  gerçek global IPv6 bağlantısı arar (global kapsamlı adres **ve** varsayılan
+  rota); varsa tünel çift yığın kurulur: wg0'a bir ULA adresi
+  (`fd00:66::1/64`) verilir, IPv6 yönlendirme açılır, nftables NAT66 ve
+  IPv6 istemci izolasyonu uygular, unbound v6 üzerinden de yanıt verir ve
+  API istemciye `::/0` rotasını bildirir. Bu, klasik **IPv6 sızıntısını**
+  kapatır: çift yığın bir istemci artık v6 trafiğini de tünelden geçirir.
+
+  Global IPv6 yoksa hiçbir bileşen v6 açmaz ve API `allowedIps` içinde
+  `::/0` **bildirmez** — çünkü taşınamayan bir rotayı reklam etmek
+  istemcinin IPv6 trafiğini kara deliğe yollar; sızıntıyı bırakmak bundan
+  daha az zararlıdır. Bu durumda sızıntı devam eder ve tam çözümü istemci
+  tarafındadır (Android `VpnService.Builder` ile VPN dışı v6'yı engellemek),
+  bu deponun kapsamı dışındadır.
+
+  Üç betik (`10-sysctl`, `20-wireguard`, `60-vpn-api-service`) aynı
+  `detect_ipv6_support` testini kullanır; ayrışmaları hâlinde "adres var
+  ama yönlendirme yok" gibi sessiz arızalar doğardı.
 - **OpenVPN management soketleri TCP/127.0.0.1, unix soket değil.** Yalnızca
   loopback'e bağlı, parola korumalı; ama bu makinedeki HERHANGİ bir yerel
   süreç yine de bağlanmayı deneyebilir (dosya sistemi izinleriyle değil, ağ

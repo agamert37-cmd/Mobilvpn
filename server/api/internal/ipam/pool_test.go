@@ -62,6 +62,54 @@ func TestReserveConflict(t *testing.T) {
 	}
 }
 
+func TestDeriveIPv6EmbedsTheV4Address(t *testing.T) {
+	got, err := DeriveIPv6(net.ParseIP("10.66.0.2"), "fd00:66::/64")
+	if err != nil {
+		t.Fatalf("DeriveIPv6: %v", err)
+	}
+	if want := net.ParseIP("fd00:66::a42:2"); !got.Equal(want) {
+		t.Fatalf("DeriveIPv6 = %s, want %s", got, want)
+	}
+}
+
+func TestDeriveIPv6IsUniquePerV4(t *testing.T) {
+	seen := map[string]string{}
+	p, err := NewPool("test", "10.66.0.0/24", "10.66.0.1")
+	if err != nil {
+		t.Fatalf("NewPool: %v", err)
+	}
+	for i := 0; i < p.Capacity(); i++ {
+		v4, err := p.Allocate("s")
+		if err != nil {
+			t.Fatalf("Allocate #%d: %v", i, err)
+		}
+		v6, err := DeriveIPv6(v4, "fd00:66::/64")
+		if err != nil {
+			t.Fatalf("DeriveIPv6(%s): %v", v4, err)
+		}
+		if prev, dup := seen[v6.String()]; dup {
+			t.Fatalf("v6 collision: %s derived from both %s and %s", v6, prev, v4)
+		}
+		seen[v6.String()] = v4.String()
+	}
+}
+
+func TestDeriveIPv6RejectsBadInput(t *testing.T) {
+	if _, err := DeriveIPv6(net.ParseIP("fd00::1"), "fd00:66::/64"); err == nil {
+		t.Errorf("expected an error passing an IPv6 address as the v4 argument")
+	}
+	if _, err := DeriveIPv6(net.ParseIP("10.66.0.2"), "10.66.0.0/16"); err == nil {
+		t.Errorf("expected an error passing an IPv4 CIDR as the v6 prefix")
+	}
+	if _, err := DeriveIPv6(net.ParseIP("10.66.0.2"), "not-a-cidr"); err == nil {
+		t.Errorf("expected an error on an unparseable prefix")
+	}
+	// A /112 leaves only 16 bits, too few to hold a 32-bit v4 address.
+	if _, err := DeriveIPv6(net.ParseIP("10.66.0.2"), "fd00:66::/112"); err == nil {
+		t.Errorf("expected an error on a prefix too small to embed an IPv4 address")
+	}
+}
+
 func TestGatewayNeverAllocated(t *testing.T) {
 	p, err := NewPool("test", "10.66.0.0/28", "10.66.0.5")
 	if err != nil {
