@@ -447,15 +447,30 @@ func TestHandleTelemetryIKEv2ReportsClientPerspective(t *testing.T) {
 	const bytesIn, bytesOut = 2_000, 9_000
 	fi.setStat(connected.SessionID, bytesIn, bytesOut)
 
+	// The first poll only establishes the sampling baseline, so it reports a
+	// zero delta by design.
+	doJSON(t, srv, http.MethodGet, "/api/v1/telemetry?sessionId="+connected.SessionID, nil)
+
+	// Second poll: the counters have moved, and the response must carry the
+	// difference (what the client will add to its own running total), with
+	// download and upload the right way round.
+	const moreIn, moreOut = 2_500, 14_000
+	fi.setStat(connected.SessionID, moreIn, moreOut)
+
 	_, body := doJSON(t, srv, http.MethodGet, "/api/v1/telemetry?sessionId="+connected.SessionID, nil)
 	var telemetry ServerTelemetryDto
 	mustDecode(t, body, &telemetry)
 
-	if telemetry.TotalDownloadedBytes != bytesOut {
-		t.Errorf("TotalDownloadedBytes = %d, want %d (server's bytes-out)", telemetry.TotalDownloadedBytes, bytesOut)
+	if want := int64(moreOut - bytesOut); telemetry.TotalDownloadedBytes != want {
+		t.Errorf("TotalDownloadedBytes = %d, want %d (delta of the server's bytes-out, not the cumulative %d)",
+			telemetry.TotalDownloadedBytes, want, moreOut)
 	}
-	if telemetry.TotalUploadedBytes != bytesIn {
-		t.Errorf("TotalUploadedBytes = %d, want %d (server's bytes-in)", telemetry.TotalUploadedBytes, bytesIn)
+	if want := int64(moreIn - bytesIn); telemetry.TotalUploadedBytes != want {
+		t.Errorf("TotalUploadedBytes = %d, want %d (delta of the server's bytes-in, not the cumulative %d)",
+			telemetry.TotalUploadedBytes, want, moreIn)
+	}
+	if telemetry.TrafficSamples == nil {
+		t.Error("TrafficSamples is nil; it marshals to JSON null, which the client's non-null List<Float> rejects")
 	}
 }
 

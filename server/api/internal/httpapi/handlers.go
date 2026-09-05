@@ -38,6 +38,19 @@ func (a *App) handleServers(w http.ResponseWriter, r *http.Request) {
 		if !v.Healthy && !v.IsSelf {
 			continue // don't advertise a fleet sibling that's currently down
 		}
+		// categoryNames must never be null. The client declares it as a
+		// non-null List<String> with no default, and Moshi's
+		// KotlinJsonAdapter rejects both an explicit null and an absent key
+		// ("Non-null value 'categoryNames' was null"). That exception
+		// escapes into fetchServerNodes()'s catch, which quietly returns the
+		// hardcoded defaultServers — so one node in nodes.json without a
+		// "categories" entry replaces the ENTIRE real server list with demo
+		// data, with no visible error. A nil Go slice marshals to null, so
+		// normalise here.
+		categories := v.Categories
+		if categories == nil {
+			categories = []string{}
+		}
 		out = append(out, ServerNodeDto{
 			ID:            v.ID,
 			Country:       v.Country,
@@ -46,7 +59,7 @@ func (a *App) handleServers(w http.ResponseWriter, r *http.Request) {
 			IPAddress:     v.IPAddress,
 			PingMs:        v.PingMs,
 			LoadPercent:   v.LoadPercent,
-			CategoryNames: v.Categories,
+			CategoryNames: categories,
 			IsFastest:     v.IsFastest,
 		})
 	}
@@ -449,18 +462,24 @@ func (a *App) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	down, up, history := sess.Sample(clientDownBytes, clientUpBytes)
+	sample := sess.Sample(clientDownBytes, clientUpBytes)
+	// totalDownloadedBytes/totalUploadedBytes carry the DELTA since the last
+	// poll, not the cumulative counter, because the client accumulates them
+	// itself (VpnViewModel.startLiveServerTelemetry does
+	// `state.totalDownloadedBytes + telemetry.totalDownloadedBytes` once a
+	// second). Sending the cumulative value made the displayed total grow
+	// quadratically. The field names are the client's, not ours.
 	writeJSON(w, http.StatusOK, ServerTelemetryDto{
 		ServerID:               a.cfg.NodeID,
 		Status:                 "CONNECTED",
 		VirtualIP:              sess.VirtualIP,
-		DownloadSpeedMbps:      down,
-		UploadSpeedMbps:        up,
-		TotalDownloadedBytes:   int64(clientDownBytes),
-		TotalUploadedBytes:     int64(clientUpBytes),
+		DownloadSpeedMbps:      sample.DownMbps,
+		UploadSpeedMbps:        sample.UpMbps,
+		TotalDownloadedBytes:   int64(sample.DownDelta),
+		TotalUploadedBytes:     int64(sample.UpDelta),
 		SessionDurationSeconds: int64(time.Since(sess.CreatedAt).Seconds()),
 		ServerHealth:           health,
-		TrafficSamples:         history,
+		TrafficSamples:         sample.History,
 	})
 }
 

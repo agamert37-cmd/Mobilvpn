@@ -88,22 +88,79 @@ func TestLoadMissingFileIsNotAnError(t *testing.T) {
 func TestSampleComputesThroughputBetweenPolls(t *testing.T) {
 	sess := &Session{ID: "sess-1"}
 
-	down, up, hist := sess.Sample(0, 0)
-	if down != 0 || up != 0 || len(hist) != 1 {
-		t.Fatalf("first sample should be baseline-only: down=%v up=%v hist=%v", down, up, hist)
+	first := sess.Sample(0, 0)
+	if first.DownMbps != 0 || first.UpMbps != 0 || len(first.History) != 1 {
+		t.Fatalf("first sample should be baseline-only: %+v", first)
 	}
 
-	// Simulate ~1MB/s down and ~0.5MB/s up over a fixed synthetic interval by
-	// directly manipulating the unexported baseline via a second Sample call
-	// and checking direction/sign rather than an exact figure (wall-clock
-	// timing in CI can't be relied on for an exact Mbps match).
+	// Direction/sign rather than an exact figure: wall-clock timing in CI
+	// can't be relied on for an exact Mbps match.
 	time.Sleep(10 * time.Millisecond)
-	down2, up2, hist2 := sess.Sample(1_000_000, 500_000)
-	if down2 <= 0 || up2 <= 0 {
-		t.Fatalf("expected positive throughput after bytes increased, got down=%v up=%v", down2, up2)
+	second := sess.Sample(1_000_000, 500_000)
+	if second.DownMbps <= 0 || second.UpMbps <= 0 {
+		t.Fatalf("expected positive throughput after bytes increased, got %+v", second)
 	}
-	if len(hist2) != 2 {
-		t.Fatalf("history length = %d, want 2", len(hist2))
+	if len(second.History) != 2 {
+		t.Fatalf("history length = %d, want 2", len(second.History))
+	}
+}
+
+// The client ADDS each reading to its own running total once a second
+// (VpnViewModel.startLiveServerTelemetry), so what we report has to be the
+// bytes moved since the previous poll. Reporting the cumulative counter
+// makes the user's displayed total grow quadratically.
+func TestSampleReportsPerIntervalDeltasNotCumulative(t *testing.T) {
+	sess := &Session{ID: "sess-delta"}
+
+	sess.Sample(1_000, 500) // establish a baseline
+
+	second := sess.Sample(4_000, 1_500)
+	if second.DownDelta != 3_000 {
+		t.Errorf("DownDelta = %d, want 3000 (4000-1000), not the cumulative 4000", second.DownDelta)
+	}
+	if second.UpDelta != 1_000 {
+		t.Errorf("UpDelta = %d, want 1000 (1500-500), not the cumulative 1500", second.UpDelta)
+	}
+
+	// Summing the deltas has to reconstruct the true total, which is the
+	// whole point of sending them.
+	third := sess.Sample(10_000, 2_000)
+	if got := second.DownDelta + third.DownDelta; got != 9_000 {
+		t.Errorf("deltas sum to %d, want 9000 (10000 - the 1000 baseline)", got)
+	}
+	if got := second.UpDelta + third.UpDelta; got != 1_500 {
+		t.Errorf("up deltas sum to %d, want 1500 (2000 - the 500 baseline)", got)
+	}
+}
+
+// A tunnel restart resets the backend's counter. Subtracting a larger
+// previous reading would underflow uint64 into an astronomic delta, which
+// the client would then add to its total.
+func TestSampleHandlesCounterResetWithoutUnderflow(t *testing.T) {
+	sess := &Session{ID: "sess-reset"}
+	sess.Sample(5_000_000, 2_000_000)
+
+	after := sess.Sample(120, 40) // tunnel restarted, counters back near zero
+	if after.DownDelta != 0 || after.UpDelta != 0 {
+		t.Fatalf("counter reset should report zero, got down=%d up=%d", after.DownDelta, after.UpDelta)
+	}
+	if after.DownMbps != 0 || after.UpMbps != 0 {
+		t.Errorf("counter reset should report zero throughput, got %+v", after)
+	}
+
+	// And it recovers on the next poll rather than staying stuck.
+	next := sess.Sample(1_120, 1_040)
+	if next.DownDelta != 1_000 || next.UpDelta != 1_000 {
+		t.Errorf("after reset, next delta = down %d up %d, want 1000/1000", next.DownDelta, next.UpDelta)
+	}
+}
+
+// trafficSamples is a non-null List<Float> on the client and Moshi throws
+// on an explicit null, so History must never marshal to null.
+func TestSampleHistoryIsNeverNil(t *testing.T) {
+	sess := &Session{ID: "sess-hist"}
+	if got := sess.Sample(0, 0); got.History == nil {
+		t.Fatal("History is nil on the first sample; it would marshal to JSON null")
 	}
 }
 

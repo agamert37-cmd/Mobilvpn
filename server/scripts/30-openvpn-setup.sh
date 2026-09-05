@@ -30,8 +30,50 @@ fi
 cd "$EASYRSA_DIR"
 export EASYRSA_BATCH=1
 
+# --- Anahtar algoritması: yeni PKI'lerde EC (P-256) ---
+#
+# Bu bir hız değil, bir DOĞRULUK kararı. Android istemcisinin OkHttp
+# zaman aşımı 3 saniye (data/VpnRepository.kt) ve aşıldığında sessizce
+# SİMÜLE edilmiş bir bağlantıya düşüyor: kullanıcı korunduğunu sanır ama
+# ortada tünel yoktur.
+#
+# /connect yolundaki sertifika üretimi, CA veritabanını bozmamak için
+# sıraya alınmak zorunda (bkz. internal/openvpn/pki.go withPKILock).
+# Sıraya alınmış üretim bu makinede ölçüldü:
+#
+#   RSA-2048 : sertifika başına ~0,40 sn -> 8 eşzamanlı bağlantı 2,42 sn
+#   EC P-256 : sertifika başına ~0,03 sn -> 8 eşzamanlı bağlantı 0,21 sn
+#
+# RSA ile 8 kişi aynı anda bağlanmaya çalıştığında sonuncusu 3 saniyelik
+# bütçenin sınırında; biraz daha kalabalıkta bütçe aşılır ve o kullanıcı
+# korumasız kalır. EC ile aynı yük bütçenin %7'sini kullanır.
+#
+# Gerçek openvpn 2.6.19 ile uçtan uca doğrulandı: TLSv1.3,
+# ECprime256v1 / ecdsa-with-SHA256, "Initialization Sequence Completed".
+#
+# MEVCUT kurulumlar dokunulmadan RSA kalır (aşağıdaki koşullar zaten var
+# olan bir PKI'yi yeniden üretmez); yalnızca yeni PKI'ler EC olur.
 if [ ! -d pki ]; then
+  EASYRSA_ALGO="${VPN_OVPN_KEY_ALGO:-ec}"
+  if [ "$EASYRSA_ALGO" = "ec" ]; then
+    EASYRSA_CURVE="${VPN_OVPN_EC_CURVE:-prime256v1}"
+    export EASYRSA_CURVE
+    log_info "PKI anahtar algoritması: EC ($EASYRSA_CURVE)"
+  else
+    log_info "PKI anahtar algoritması: $EASYRSA_ALGO"
+  fi
+  export EASYRSA_ALGO
   ./easyrsa init-pki
+elif [ -f pki/private/ca.key ]; then
+  # Var olan bir PKI'nin algoritmasını CA anahtarından öğren: sunucu ve
+  # istemci sertifikaları CA ile aynı algoritmada üretilmeli.
+  if openssl pkey -in pki/private/ca.key -noout -text 2>/dev/null | grep -qi "^ *ASN1 OID\|NIST CURVE"; then
+    EASYRSA_ALGO=ec
+    EASYRSA_CURVE="$(openssl pkey -in pki/private/ca.key -noout -text 2>/dev/null |
+      awk '/NIST CURVE/ {print $3}' | head -n1)"
+    [ -n "$EASYRSA_CURVE" ] && export EASYRSA_CURVE
+    export EASYRSA_ALGO
+  fi
 fi
 
 if [ ! -f pki/ca.crt ]; then
@@ -44,7 +86,11 @@ if [ ! -f pki/issued/server.crt ]; then
   ./easyrsa build-server-full server nopass
 fi
 
-if [ ! -f pki/dh.pem ]; then
+# DH parametreleri yalnızca RSA PKI'ler için gerekli ve üretilmesi
+# dakikalar sürebilir. EC sertifikalarla anahtar değişimi ECDHE üzerinden
+# yapılır, bu yüzden "dh none" doğru olanıdır (gerçek openvpn 2.6.19 ile
+# doğrulandı: TLSv1.3, peer temporary key 253 bits X25519).
+if [ "${EASYRSA_ALGO:-rsa}" != "ec" ] && [ ! -f pki/dh.pem ]; then
   log_info "Diffie-Hellman parametreleri üretiliyor (bu birkaç dakika sürebilir)..."
   ./easyrsa gen-dh
 fi
@@ -75,6 +121,14 @@ if [ ! -s "$MGMT_PASS_FILE" ]; then
 fi
 chmod 600 "$MGMT_PASS_FILE"
 
+# Betik yeniden çalıştırıldığında da PKI'nin gerçek durumunu izle: dh.pem
+# varsa (RSA kurulum) onu göster, yoksa "dh none".
+if [ -f "$EASYRSA_DIR/pki/dh.pem" ]; then
+  DH_DIRECTIVE="dh $EASYRSA_DIR/pki/dh.pem"
+else
+  DH_DIRECTIVE="dh none"
+fi
+
 render_openvpn_server_conf() {
   local proto="$1" dev="$2" port="$3" mgmt_port="$4" out="$5"
   cat > "$out" <<EOF
@@ -92,7 +146,7 @@ client-config-dir $CCD_DIR
 ca $EASYRSA_DIR/pki/ca.crt
 cert $EASYRSA_DIR/pki/issued/server.crt
 key $EASYRSA_DIR/pki/private/server.key
-dh $EASYRSA_DIR/pki/dh.pem
+$DH_DIRECTIVE
 tls-crypt $EASYRSA_DIR/ta.key
 crl-verify $SERVER_DIR/crl.pem
 cipher AES-256-GCM

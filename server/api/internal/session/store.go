@@ -45,42 +45,72 @@ type Session struct {
 	history       []float32
 }
 
+// SampleResult is one telemetry reading, shaped for what the Android client
+// actually does with each field.
+type SampleResult struct {
+	DownMbps float32
+	UpMbps   float32
+
+	// DownDelta/UpDelta are the bytes moved SINCE THE PREVIOUS SAMPLE, not
+	// the running totals — even though the wire field is called
+	// "totalDownloadedBytes".
+	//
+	// That name is the client's, and the client accumulates it itself:
+	//
+	//   totalDownloadedBytes = state.totalDownloadedBytes + telemetry.totalDownloadedBytes
+	//
+	// (viewmodel/VpnViewModel.kt, startLiveServerTelemetry). It polls once a
+	// second, so sending the cumulative tunnel counter makes the number the
+	// user sees grow quadratically — a session sitting at 100 MB would show
+	// ~3 GB after a minute and ~180 GB after an hour.
+	DownDelta uint64
+	UpDelta   uint64
+
+	// History mirrors the client's own 16-slot trafficHistory so a fresh
+	// client immediately has a full sparkline instead of ramping up from
+	// zero. Never nil: the client's trafficSamples is a non-null
+	// List<Float>, and Moshi throws on an explicit null.
+	History []float32
+}
+
 // Sample records a new cumulative byte reading for the session and returns
-// the instantaneous throughput in Mbps computed against the previous
-// reading, plus a rolling 16-sample history (mirroring the client's own
-// trafficHistory length so a fresh client immediately has a full sparkline
-// instead of ramping up from zero).
+// the throughput, the per-interval deltas, and the rolling history.
 //
 // Both counters are from the CLIENT's point of view — callers are
 // responsible for flipping the server-side rx/tx their tunnel backend
 // reports (see the telemetry handler).
-func (s *Session) Sample(downBytes, upBytes uint64) (downMbps, upMbps float32, history []float32) {
+func (s *Session) Sample(downBytes, upBytes uint64) SampleResult {
 	s.sampleMu.Lock()
 	defer s.sampleMu.Unlock()
 
+	out := SampleResult{}
 	now := time.Now()
 	if !s.lastSampleAt.IsZero() {
-		elapsed := now.Sub(s.lastSampleAt).Seconds()
-		if elapsed > 0 {
-			if downBytes >= s.lastDownBytes {
-				downMbps = float32(float64(downBytes-s.lastDownBytes) * 8 / elapsed / 1_000_000)
-			}
-			if upBytes >= s.lastUpBytes {
-				upMbps = float32(float64(upBytes-s.lastUpBytes) * 8 / elapsed / 1_000_000)
-			}
+		// A counter that went backwards means the tunnel restarted and the
+		// backend's counter reset. Report zero rather than a nonsense
+		// wrapped-around delta, and let the next sample resume normally.
+		if downBytes >= s.lastDownBytes {
+			out.DownDelta = downBytes - s.lastDownBytes
+		}
+		if upBytes >= s.lastUpBytes {
+			out.UpDelta = upBytes - s.lastUpBytes
+		}
+		if elapsed := now.Sub(s.lastSampleAt).Seconds(); elapsed > 0 {
+			out.DownMbps = float32(float64(out.DownDelta) * 8 / elapsed / 1_000_000)
+			out.UpMbps = float32(float64(out.UpDelta) * 8 / elapsed / 1_000_000)
 		}
 	}
 	s.lastSampleAt = now
 	s.lastDownBytes = downBytes
 	s.lastUpBytes = upBytes
 
-	s.history = append(s.history, downMbps)
+	s.history = append(s.history, out.DownMbps)
 	if len(s.history) > 16 {
 		s.history = s.history[len(s.history)-16:]
 	}
-	history = make([]float32, len(s.history))
-	copy(history, s.history)
-	return downMbps, upMbps, history
+	out.History = make([]float32, len(s.history))
+	copy(out.History, s.history)
+	return out
 }
 
 // persistedSession is the on-disk shape: no mutexes, no unexported sampling

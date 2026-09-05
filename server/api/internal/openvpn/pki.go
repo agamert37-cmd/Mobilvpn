@@ -16,6 +16,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sync"
+	"syscall"
 )
 
 var ErrPKINotInitialized = errors.New("openvpn: easy-rsa PKI not initialized (run scripts/30-openvpn-setup.sh first)")
@@ -28,10 +30,57 @@ var validName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 type PKI struct {
 	dir string // EasyRSADir
+
+	// mu serializes every easy-rsa invocation that mutates the PKI.
+	//
+	// easy-rsa is a shell wrapper around `openssl ca`, which keeps its
+	// state in two shared files: pki/index.txt (the certificate database)
+	// and pki/serial (the next serial number). Neither is written under a
+	// lock, so concurrent issuance corrupts them. Measured here by issuing
+	// 8 certificates in parallel against one PKI: two certificates came out
+	// carrying the SAME serial, and only 7 of the 8 were recorded in
+	// index.txt at all.
+	//
+	// Both outcomes break revocation, which is how a disconnect actually
+	// ends an OpenVPN session:
+	//   - a duplicate serial means revoking one session's certificate also
+	//     revokes an unrelated user's, since the CRL lists serials;
+	//   - a certificate missing from index.txt can never be revoked at all,
+	//     because `easyrsa revoke` looks it up there — a credential that
+	//     stays valid until the CA expires.
+	//
+	// Two users pressing connect at the same moment is ordinary traffic,
+	// not an edge case, so this is serialized rather than hoped about.
+	mu sync.Mutex
 }
 
 func NewPKI(easyRSADir string) *PKI {
 	return &PKI{dir: easyRSADir}
+}
+
+// withPKILock serializes PKI mutations within this process (mu) and against
+// any other process touching the same directory (an flock on the PKI dir).
+//
+// The in-process mutex alone is not enough: scripts/test-peer.sh and a
+// manual `easyrsa` run by an operator use the same files, and the file lock
+// is what keeps those from interleaving with a live /connect. A missing or
+// unopenable lock file is not fatal — the mutex still holds — because
+// refusing to connect would be a worse failure than the race it guards.
+func (p *PKI) withPKILock(fn func() error) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	lockPath := filepath.Join(p.dir, "pki", ".mobilvpn-ca.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fn()
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return fn()
+	}
+	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
+	return fn()
 }
 
 func (p *PKI) easyrsaBin() string {
@@ -62,11 +111,16 @@ func (p *PKI) IssueClient(name string) (*ClientCredential, error) {
 		return nil, ErrPKINotInitialized
 	}
 
-	cmd := exec.Command(p.easyrsaBin(), "build-client-full", name, "nopass")
-	cmd.Dir = p.dir
-	cmd.Env = append(os.Environ(), "EASYRSA_BATCH=1")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("openvpn: easyrsa build-client-full failed: %w (%s)", err, truncate(out, 400))
+	if err := p.withPKILock(func() error {
+		cmd := exec.Command(p.easyrsaBin(), "build-client-full", name, "nopass")
+		cmd.Dir = p.dir
+		cmd.Env = append(os.Environ(), "EASYRSA_BATCH=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("openvpn: easyrsa build-client-full failed: %w (%s)", err, truncate(out, 400))
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	cert, err := os.ReadFile(filepath.Join(p.dir, "pki", "issued", name+".crt"))
@@ -105,15 +159,23 @@ func (p *PKI) RevokeClient(name string) error {
 	cmd := exec.Command(p.easyrsaBin(), "revoke", name)
 	cmd.Dir = p.dir
 	cmd.Env = append(os.Environ(), "EASYRSA_BATCH=1")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("openvpn: easyrsa revoke failed: %w (%s)", err, truncate(out, 400))
-	}
 
-	genCRL := exec.Command(p.easyrsaBin(), "gen-crl")
-	genCRL.Dir = p.dir
-	genCRL.Env = append(os.Environ(), "EASYRSA_BATCH=1")
-	if out, err := genCRL.CombinedOutput(); err != nil {
-		return fmt.Errorf("openvpn: easyrsa gen-crl failed: %w (%s)", err, truncate(out, 400))
+	// revoke and gen-crl are one critical section, not two: a CRL generated
+	// from a half-written index.txt would silently omit a revocation, and
+	// the certificate it was meant to kill would keep working.
+	if err := p.withPKILock(func() error {
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("openvpn: easyrsa revoke failed: %w (%s)", err, truncate(out, 400))
+		}
+		genCRL := exec.Command(p.easyrsaBin(), "gen-crl")
+		genCRL.Dir = p.dir
+		genCRL.Env = append(os.Environ(), "EASYRSA_BATCH=1")
+		if out, err := genCRL.CombinedOutput(); err != nil {
+			return fmt.Errorf("openvpn: easyrsa gen-crl failed: %w (%s)", err, truncate(out, 400))
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	// Best-effort cleanup of the private key material for the revoked name;

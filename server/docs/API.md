@@ -135,8 +135,8 @@ dolmuş bir `sessionId` de "zaten sonlanmış" olarak başarılı sayılır
   "virtualIp": "10.66.0.2",
   "downloadSpeedMbps": 42.7,
   "uploadSpeedMbps": 11.3,
-  "totalDownloadedBytes": 104857600,
-  "totalUploadedBytes": 20971520,
+  "totalDownloadedBytes": 5242880,
+  "totalUploadedBytes": 1048576,
   "sessionDurationSeconds": 125,
   "serverHealth": "OPTIMAL",
   "trafficSamples": [12.1, 15.4, ...]
@@ -148,6 +148,57 @@ arasındaki **gerçek** bayt sayacı farkından hesaplanır — simüle edilmez.
 `serverHealth`: `OPTIMAL` (aktif el sıkışma), `DEGRADED` (WireGuard peer'ı
 3 dakikadan uzun süredir el sıkışmadı), `CONNECTING` (OpenVPN kimliği
 verildi ama istemci henüz bağlanmadı). Bilinmeyen `sessionId` → `404`.
+
+### `totalDownloadedBytes` / `totalUploadedBytes` aslında ARTIŞTIR
+
+Adlarına rağmen bu iki alan, **bir önceki yoklamadan bu yana** taşınan
+bayt sayısıdır; kümülatif sayaç değildir. Adlar istemciye aittir ve
+istemci toplamı kendisi tutar:
+
+```kotlin
+// viewmodel/VpnViewModel.kt, startLiveServerTelemetry
+totalDownloadedBytes = state.totalDownloadedBytes + telemetry.totalDownloadedBytes
+```
+
+Uygulama saniyede bir yokladığı için kümülatif sayaç göndermek, kullanıcının
+gördüğü toplamı karesel büyütür: 100 MB'da duran bir oturum bir dakika
+sonra ~3 GB, bir saat sonra ~180 GB görünür.
+
+Bağlantıdan sonraki **ilk** yoklama örnekleme temelini kurar ve tasarım
+gereği 0 döner (istemcinin ekleyeceği bir geçmiş yoktur). Tünel yeniden
+başlarsa arka uç sayacı sıfırlanır; bu durumda o yoklama negatife düşmek
+ya da uint64 taşması yaşamak yerine 0 döner ve bir sonraki yoklamada
+normale döner.
+
+### İstemcinin katı olduğu noktalar
+
+Uygulama Moshi'yi `KotlinJsonAdapterFactory` ile kuruyor
+(`data/VpnRepository.kt`). Uygulamanın gerçek DTO'larıyla ve gerçek
+Moshi 1.15.2 ile ölçüldü:
+
+| Durum | Sonuç |
+|---|---|
+| Bilinmeyen fazladan alan | **Yok sayılır** — yanıta alan eklemek güvenli |
+| `categoryNames: null` ya da alan hiç yok | `JsonDataException` — **tüm** `/servers` yanıtı çöker |
+| `trafficSamples: null` | `JsonDataException` — telemetri yanıtı çöker |
+| Varsayılanı olmayan bir alan eksik (ör. `virtualIp`) | `JsonDataException` |
+| `message: null` | Sorun yok (alan nullable) |
+| `/settings` yanıtında boolean olmayan bir değer | `JsonDataException` (`Map<String, Boolean>`) |
+
+Bunlar sessiz arızalardır: `VpnRepository` istisnayı yutar ve sunucu
+listesinde **sabit kodlanmış demo listesine** (`defaultServers`), telemetride
+ise simüle edilmiş değerlere düşer. Kullanıcı gerçek sunucuya bağlı
+olduğunu sanır. Bu yüzden `categoryNames` ve `trafficSamples` sunucu
+tarafında asla `null` olmayacak şekilde normalize edilir.
+
+### Zaman aşımı bütçesi: 3 saniye
+
+İstemcinin OkHttp bağlantı/okuma/yazma zaman aşımı **3 saniye**
+(`data/VpnRepository.kt`). `/connect` bu süreyi aşarsa uygulama istisnayı
+yakalar ve **simüle edilmiş** bir bağlantı üretir: kullanıcıya "bağlandı"
+gösterilir ama ortada tünel yoktur. Bu yüzden `/connect` yolundaki her iş
+bu bütçeye göre tasarlanmıştır (bkz. `docs/ARCHITECTURE.md`, sertifika
+algoritması seçimi).
 
 ## POST /api/v1/settings
 

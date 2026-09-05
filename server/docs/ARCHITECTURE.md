@@ -137,6 +137,63 @@ gerçeği), arayüz henüz yoksa wg-quick'in formülünü tekrarlar ve IPv6'nın
 zorunlu asgarisi olan 1280'in altına inmez. `verify.sh` ikisinin
 uyuştuğunu ayrıca denetler.
 
+### Sertifika algoritması: 3 saniyelik bütçe bir doğruluk sınırıdır
+
+Android istemcisinin OkHttp zaman aşımı 3 saniye ve aşıldığında istisnayı
+yakalayıp **simüle edilmiş** bir bağlantı üretiyor
+(`data/VpnRepository.kt`, `requestConnect`'in catch bloğu). Yani yavaş bir
+`/connect`, hata olarak değil, "bağlandınız" olarak görünür — kullanıcı
+korumasızken korunduğunu sanır. Bu, bir performans meselesi değil,
+güvenlik meselesidir.
+
+`/connect` yolundaki en pahalı iş OpenVPN sertifikası üretmek ve bu iş
+sıraya alınmak zorunda: easy-rsa, `pki/index.txt` ve `pki/serial`
+dosyalarını kilitsiz yazar (bkz. bir sonraki bölüm). Sıraya alınmış
+üretim ölçüldü:
+
+| algoritma | sertifika başına | 8 eşzamanlı bağlantı |
+|---|---|---|
+| RSA-2048 | ~0,40 sn | 2,42 sn (3 sn bütçesinin sınırında) |
+| EC P-256 | ~0,03 sn | **0,21 sn** |
+
+RSA ile sekiz kişinin aynı anda bağlanması bütçeyi zorlar; biraz daha
+kalabalıkta sonuncu kullanıcı sessizce simülasyona düşer. Bu yüzden yeni
+PKI'ler EC P-256 ile kuruluyor. Gerçek openvpn 2.6.19 ile uçtan uca
+doğrulandı: `TLSv1.3`, `ECprime256v1 / ecdsa-with-SHA256`,
+`Initialization Sequence Completed`.
+
+Yan fayda: EC'de `dh` parametresi gerekmez (anahtar değişimi ECDHE ile
+yapılır), böylece kurulumdaki dakikalar süren `gen-dh` adımı de ortadan
+kalkar. Mevcut RSA kurulumları olduğu gibi çalışmaya devam eder; betik
+CA anahtarından algoritmayı okuyup `dh` yönergesini ona göre yazar.
+
+### easy-rsa eşzamanlılığı: bozulan CA veritabanı
+
+easy-rsa, `openssl ca` etrafında bir kabuk sarmalayıcısıdır ve durumunu
+iki paylaşılan dosyada tutar: `pki/index.txt` (sertifika veritabanı) ve
+`pki/serial`. Hiçbiri kilit altında yazılmaz.
+
+Tek bir PKI'ye karşı 8 sertifika paralel üretildiğinde ölçülen sonuç:
+**iki sertifika aynı seri numarasını aldı** ve **8 sertifikadan yalnızca
+7'si index.txt'ye yazıldı**.
+
+İkisi de iptali (revocation) bozar ve iptal, `/disconnect`'in bir OpenVPN
+oturumunu gerçekten sonlandırma yoludur:
+
+- aynı seriyi paylaşan iki sertifikadan birini iptal etmek diğerini de
+  iptal eder (CRL serileri listeler), yani ilgisiz bir kullanıcı atılır;
+- index.txt'de kaydı olmayan bir sertifika **hiç iptal edilemez**, çünkü
+  `easyrsa revoke` onu orada arar — CA süresi dolana kadar geçerli kalan
+  bir kimlik bilgisi.
+
+İki kullanıcının aynı anda bağlan'a basması olağan trafiktir, uç durum
+değil. Bu yüzden `internal/openvpn/pki.go` her mutasyonu hem süreç içi bir
+mutex hem de PKI dizini üzerinde bir `flock` ile sıraya alır; dosya kilidi,
+`scripts/test-peer.sh` ya da operatörün elle çalıştırdığı bir `easyrsa`
+komutunun canlı bir `/connect` ile iç içe geçmesini engeller.
+`revoke` ve `gen-crl` tek bir kritik bölümdür: yarım yazılmış bir
+index.txt'den üretilen CRL, öldürmesi gereken sertifikayı sessizce atlar.
+
 ### unbound: ölçülmüş iş parçacığı ayarı
 
 Tünelin tüm DNS'i bu çözümleyiciden geçtiği için gecikmesi doğrudan
