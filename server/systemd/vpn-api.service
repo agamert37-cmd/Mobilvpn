@@ -1,0 +1,41 @@
+[Unit]
+Description=Mobilvpn tunnel management API (WireGuard/OpenVPN control plane)
+After=network-online.target wg-quick@wg0.service openvpn-server@server-udp.service openvpn-server@server-tcp.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/vpn-api
+Environment=VPN_API_CONFIG=/etc/vpn-api/config.json
+Restart=on-failure
+RestartSec=3s
+
+# Runs as root: it shells out to `wg`/`ip` (CAP_NET_ADMIN), reads/writes the
+# WireGuard private key and easy-rsa PKI, and calls unbound-control — all
+# independently privileged operations, same as wg-quick@ and openvpn-server@
+# themselves. ProtectSystem=strict + the explicit ReadWritePaths below still
+# meaningfully bound its filesystem blast radius even so; see docs/SECURITY.md
+# for the tradeoff and the least-privilege follow-up path.
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/etc/wireguard /etc/openvpn /etc/vpn-api /etc/unbound/unbound.conf.d
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# No stdout/stderr buffering surprises for `journalctl -u vpn-api -f`.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

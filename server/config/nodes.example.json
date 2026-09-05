@@ -1,0 +1,26 @@
+[
+  {
+    "id": "tr_ist_01",
+    "country": "Türkiye",
+    "city": "İstanbul",
+    "flagEmoji": "🇹🇷",
+    "ipAddress": "203.0.113.10",
+    "baselinePingMs": 8,
+    "baselineLoadPercent": 0,
+    "categories": ["FASTEST", "ALL"],
+    "isFastest": true,
+    "internalApiUrl": ""
+  },
+  {
+    "id": "de_fra_01",
+    "country": "Almanya",
+    "city": "Frankfurt",
+    "flagEmoji": "🇩🇪",
+    "ipAddress": "203.0.113.20",
+    "baselinePingMs": 25,
+    "baselineLoadPercent": 0,
+    "categories": ["FASTEST", "STREAMING", "ALL"],
+    "isFastest": false,
+    "internalApiUrl": "https://10.10.0.2:8443"
+  }
+]

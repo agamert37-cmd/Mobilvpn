@@ -1,0 +1,53 @@
+{
+  "listenAddr": "0.0.0.0:@@API_PUBLIC_PORT@@",
+  "nodeId": "@@NODE_ID@@",
+  "nodeRegion": "@@NODE_REGION@@",
+  "publicEndpointHost": "@@DOMAIN@@",
+  "stateFile": "/etc/vpn-api/state.json",
+  "sessionIdleTimeoutSeconds": 180,
+  "trustProxyHeaders": false,
+  "tls": {
+    "enabled": true,
+    "certFile": "/etc/letsencrypt/live/@@DOMAIN@@/fullchain.pem",
+    "keyFile": "/etc/letsencrypt/live/@@DOMAIN@@/privkey.pem"
+  },
+  "wireguard": {
+    "enabled": true,
+    "interface": "@@WG_IFACE@@",
+    "listenPort": @@WG_PORT@@,
+    "subnetCIDR": "@@WG_SUBNET@@",
+    "serverVirtualIP": "@@WG_GATEWAY@@",
+    "dns": ["@@WG_GATEWAY@@"],
+    "mtu": 1420,
+    "persistentKeepaliveSeconds": 25,
+    "keyDir": "/etc/wireguard"
+  },
+  "openvpn": {
+    "enabled": true,
+    "udpPort": @@OVPN_UDP_PORT@@,
+    "tcpPort": @@OVPN_TCP_PORT@@,
+    "subnetCIDR": "@@OVPN_SUBNET@@",
+    "easyRsaDir": "/etc/openvpn/easy-rsa",
+    "serverDir": "/etc/openvpn/server",
+    "managementUdpAddr": "127.0.0.1:7505",
+    "managementTcpAddr": "127.0.0.1:7506",
+    "managementPasswordFile": "/etc/openvpn/server/mgmt.pass",
+    "ccdDir": "/etc/openvpn/server/ccd"
+  },
+  "dns": {
+    "blocklistEnabledDefault": true,
+    "resolverAddr": "@@WG_GATEWAY@@",
+    "blocklistControlFile": "/etc/unbound/unbound.conf.d/blocklist-toggle.conf"
+  },
+  "fleet": {
+    "sharedSecret": "@@FLEET_SECRET@@",
+    "healthPollIntervalSeconds": 20,
+    "healthPollTimeoutMs": 800,
+    "nodesFile": "/etc/vpn-api/nodes.json"
+  },
+  "rateLimit": {
+    "requestsPerMinutePerIP": 60,
+    "burst": 20,
+    "maxConcurrentSessions": 500
+  }
+}

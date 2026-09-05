@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily refresh of the Mobilvpn ad/tracker DNS blocklist
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

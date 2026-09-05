@@ -16,3 +16,9 @@
 local.properties
 .env
 debug.keystore
+
+# server/ (Go vpn-api) build artifacts and local dev state
+server/api/bin/
+server/api/vpn-api
+server/api/vpn-api-state.json
+server/api/nodes.json
