@@ -75,6 +75,16 @@ yapılmadan çıkar.
 > Sorular `/dev/tty`'den okunur, stdin'den değil — `curl | sudo bash` içinde
 > stdin betiğin kendisidir. Bu yüzden tek satırlık kurulum da tam etkileşimlidir.
 
+Yukarıdaki adres `main` dalını kullanır. `server/` henüz `main`'e
+birleştirilmediyse (ya da bir özellik dalını denemek istiyorsanız) URL'deki
+dal adını değiştirin ve aynı dalı `VPN_REPO_BRANCH` ile verin:
+
+```bash
+BRANCH=claude/linux-vpn-tunnel-server-ozhg41
+curl -fsSL "https://raw.githubusercontent.com/agamert37-cmd/Mobilvpn/$BRANCH/server/bootstrap.sh" \
+  | sudo VPN_REPO_BRANCH="$BRANCH" bash
+```
+
 ### Sorusuz (otomatik) kurulum
 
 CI, imaj üretimi ya da toplu dağıtım için sihirbazı tamamen atlayın:
