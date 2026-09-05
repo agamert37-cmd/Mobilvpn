@@ -109,6 +109,37 @@ if [ "$VPN_CFG_WG_ENABLED" = "true" ]; then
 
     PEER_COUNT="$(wg show "$VPN_CFG_WG_IFACE" peers 2>/dev/null | grep -c .)"
     ok "aktif peer sayısı: $PEER_COUNT"
+
+    # Çift yığın için üç bileşenin (arayüz adresi, çekirdek yönlendirmesi,
+    # API'nin reklamı) aynı fikirde olması gerekir. Ayrışırlarsa hiçbiri
+    # hata vermez ama istemcinin IPv6 trafiği ya kara deliğe gider ya da
+    # tünelin dışından gerçek adresle sızar.
+    IFACE_HAS_V6=0
+    ip -6 addr show dev "$VPN_CFG_WG_IFACE" scope global 2>/dev/null | grep -q "inet6" && IFACE_HAS_V6=1
+    V6_FORWARDING="$(sysctl -n net.ipv6.conf.all.forwarding 2>/dev/null || echo 0)"
+
+    if [ "$VPN_CFG_WG_IPV6_ENABLED" = "true" ]; then
+      if [ "$IFACE_HAS_V6" = "1" ]; then
+        ok "çift yığın: $VPN_CFG_WG_IFACE arayüzünde global IPv6 adresi var"
+      else
+        bad "config.json ipv6Enabled=true diyor ama $VPN_CFG_WG_IFACE arayüzünde IPv6 adresi yok — API istemcilere taşınamayan bir ::/0 rotası bildiriyor (scripts/20-wireguard-setup.sh)"
+      fi
+      if [ "$V6_FORWARDING" = "1" ]; then
+        ok "IPv6 yönlendirme etkin"
+      else
+        bad "ipv6Enabled=true ama net.ipv6.conf.all.forwarding=0 — tünele giren IPv6 trafiği yönlendirilemez (scripts/10-sysctl-tuning.sh)"
+      fi
+      if nft list ruleset 2>/dev/null | grep -q "ip6 saddr.*masquerade"; then
+        ok "IPv6 NAT66 kuralı mevcut"
+      else
+        bad "ipv6Enabled=true ama nftables'ta IPv6 masquerade kuralı yok (scripts/40-nftables-firewall.sh)"
+      fi
+    else
+      ok "yalnızca IPv4 modu (::/0 reklam edilmiyor)"
+      if [ "$IFACE_HAS_V6" = "1" ]; then
+        warn "$VPN_CFG_WG_IFACE arayüzünde IPv6 adresi var ama config.json ipv6Enabled=false — istemcilere bildirilmeyen bir adres ailesi açık"
+      fi
+    fi
   else
     bad "$VPN_CFG_WG_IFACE arayüzü yok (wg-quick@${VPN_CFG_WG_IFACE} başlatılamamış olabilir)"
   fi
