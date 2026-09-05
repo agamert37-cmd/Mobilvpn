@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh the Mobilvpn ad/tracker DNS blocklist
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/mobilvpn/scripts/update-blocklist.sh
+# Runs as root: it writes into /etc/unbound and calls unbound-control.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

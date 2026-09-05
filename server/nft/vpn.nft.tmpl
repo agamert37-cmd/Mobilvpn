@@ -1,0 +1,121 @@
+#!/usr/sbin/nft -f
+# Managed by Mobilvpn server/scripts/40-nftables-firewall.sh — don't edit
+# /etc/nftables.conf by hand, edit this template and re-run the script.
+#
+# Design goals (see docs/SECURITY.md for the full rationale):
+#   - Default-deny inbound and forward; only explicitly allowed traffic passes.
+#   - Tunnel clients are isolated from each other (no wg-to-wg / tun-to-tun
+#     forwarding rule exists anywhere below — isolation by omission under a
+#     default-drop policy, reinforced with explicit drop rules so a future
+#     edit can't accidentally reopen it without someone noticing the rule).
+#   - All client DNS is forced through this box's own resolver (no leaking
+#     queries to the ISP's or any third-party resolver, and it lets the
+#     threat-protection blocklist actually apply to everyone).
+#   - No packet logging of tunnel traffic — this ruleset never logs by
+#     source/destination, only optionally (commented out below) rate-limited
+#     drops of unsolicited *inbound* scanning noise, which is about protecting
+#     the box, not about the privacy of any tunnel client's traffic.
+
+flush ruleset
+
+define WAN_IFACE = @@WAN_IFACE@@
+define SSH_PORT = @@SSH_PORT@@
+define WG_PORT = @@WG_PORT@@
+define OVPN_UDP_PORT = @@OVPN_UDP_PORT@@
+define OVPN_TCP_PORT = @@OVPN_TCP_PORT@@
+define API_PUBLIC_PORT = @@API_PUBLIC_PORT@@
+define TUNNEL_IFACES = { "@@WG_IFACE@@", "@@OVPN_UDP_DEV@@", "@@OVPN_TCP_DEV@@" }
+define TUNNEL_SUBNETS = { @@WG_SUBNET@@, @@OVPN_SUBNET@@, @@IKEV2_SUBNET@@ }
+define TUNNEL_SUBNETS_V6 = { @@WG_SUBNET_V6@@ }
+# IKEv2 has no tunnel interface to match on: with kernel IPsec the decrypted
+# packets surface on the WAN interface carrying the inner source address, so
+# its rules key on the source subnet instead of iifname.
+define IKEV2_SUBNET = @@IKEV2_SUBNET@@
+
+table inet filter {
+  chain input {
+    type filter hook input priority 0; policy drop;
+
+    iifname "lo" accept
+    ct state established,related accept
+    ct state invalid drop
+
+    # Path MTU discovery depends on ICMP; a VPN gateway that silently drops
+    # it causes mysterious "connects but hangs on real traffic" reports.
+    ip protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded } limit rate 20/second accept
+    ip6 nexthdr icmpv6 icmpv6 type { echo-request, destination-unreachable, time-exceeded, packet-too-big, nd-neighbor-solicit, nd-neighbor-advert } limit rate 20/second accept
+
+    tcp dport $SSH_PORT ct state new limit rate 15/minute accept
+
+    udp dport $WG_PORT accept
+    udp dport $OVPN_UDP_PORT accept
+    tcp dport $OVPN_TCP_PORT accept
+    tcp dport $API_PUBLIC_PORT accept
+
+    # IKEv2: 500 for the initial exchange, 4500 once NAT traversal kicks in
+    # (which is essentially always on mobile networks), plus the ESP payload
+    # itself for the rare client not behind NAT.
+    udp dport { 500, 4500 } accept
+    meta l4proto esp accept
+
+    # Decrypted IKEv2 client traffic arrives on the WAN interface with an
+    # inner source address, so DNS to this resolver has to be allowed by
+    # source subnet rather than by tunnel interface.
+    ip saddr $IKEV2_SUBNET udp dport 53 accept
+    ip saddr $IKEV2_SUBNET tcp dport 53 accept
+
+    # This box's own resolver, reachable only from tunnel interfaces —
+    # never from the WAN side.
+    iifname $TUNNEL_IFACES udp dport 53 accept
+    iifname $TUNNEL_IFACES tcp dport 53 accept
+
+    # Uncomment to count/inspect scan noise without logging tunnel traffic:
+    # limit rate 5/minute log prefix "nft-input-drop: " counter drop
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+
+    ct state established,related accept
+    ct state invalid drop
+
+    # Explicit client isolation: no tunnel subnet may ever reach another
+    # tunnel subnet, stated before the WAN-egress accept rules so the
+    # intent survives future edits even though the default policy already
+    # implies it. Both families, or a dual-stack client could simply hop
+    # over to IPv6 to reach a peer the v4 rule blocks.
+    ip saddr $TUNNEL_SUBNETS ip daddr $TUNNEL_SUBNETS drop
+    ip6 saddr $TUNNEL_SUBNETS_V6 ip6 daddr $TUNNEL_SUBNETS_V6 drop
+
+    # Force every tunnel client's DNS through our own resolver: legitimate
+    # queries to it terminate in the `input` chain above (destined at this
+    # host) and never reach `forward` at all, so anything hitting this rule
+    # is an attempt to reach some other resolver directly.
+    iifname $TUNNEL_IFACES udp dport 53 drop
+    iifname $TUNNEL_IFACES tcp dport 53 drop
+
+    # Same DNS-leak block for IKEv2, matched by source subnet since it has
+    # no tunnel interface of its own.
+    ip saddr $IKEV2_SUBNET udp dport 53 drop
+    ip saddr $IKEV2_SUBNET tcp dport 53 drop
+
+    # The rules that actually let tunnel clients reach the internet.
+    iifname $TUNNEL_IFACES oifname $WAN_IFACE accept
+    ip saddr $IKEV2_SUBNET oifname $WAN_IFACE accept
+  }
+
+  chain output {
+    type filter hook output priority 0; policy accept;
+  }
+}
+
+table inet nat {
+  chain postrouting {
+    type nat hook postrouting priority 100;
+    ip saddr $TUNNEL_SUBNETS oifname $WAN_IFACE masquerade
+    # NAT66 for the ULA tunnel prefix. Harmless when the node is v4-only:
+    # nothing ever carries a source address from this prefix, so the rule
+    # simply never matches.
+    ip6 saddr $TUNNEL_SUBNETS_V6 oifname $WAN_IFACE masquerade
+  }
+}
