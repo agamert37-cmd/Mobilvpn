@@ -8,10 +8,13 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +24,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", envOr("VPN_API_CONFIG", "/etc/vpn-api/config.json"), "path to config.json")
+	printConfig := flag.Bool("print-config", false, "print the effective configuration as shell KEY='value' lines and exit (used by scripts/verify.sh)")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -30,6 +34,13 @@ func main() {
 	if err != nil {
 		logger.Error("loading config", "path", *configPath, "error", err)
 		os.Exit(1)
+	}
+
+	if *printConfig {
+		// Let shell tooling read the *parsed* configuration rather than
+		// re-implementing JSON parsing (and its defaults) in bash.
+		emitShellConfig(cfg)
+		return
 	}
 	logger.Info("starting vpn-api",
 		"version", httpapi.Version,
@@ -109,4 +120,36 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// emitShellConfig prints the effective config as single-quoted shell
+// assignments. Values are escaped so a hostile/typo'd config value can't
+// break out of the quoting when the caller sources this output.
+func emitShellConfig(cfg config.Config) {
+	kv := [][2]string{
+		{"VPN_CFG_LISTEN_ADDR", cfg.ListenAddr},
+		{"VPN_CFG_NODE_ID", cfg.NodeID},
+		{"VPN_CFG_PUBLIC_HOST", cfg.PublicEndpointHost},
+		{"VPN_CFG_STATE_FILE", cfg.StateFile},
+		{"VPN_CFG_TLS_ENABLED", strconv.FormatBool(cfg.TLS.Enabled)},
+		{"VPN_CFG_TLS_CERT", cfg.TLS.CertFile},
+		{"VPN_CFG_TLS_KEY", cfg.TLS.KeyFile},
+		{"VPN_CFG_WG_ENABLED", strconv.FormatBool(cfg.WireGuard.Enabled)},
+		{"VPN_CFG_WG_IFACE", cfg.WireGuard.Interface},
+		{"VPN_CFG_WG_PORT", strconv.Itoa(cfg.WireGuard.ListenPort)},
+		{"VPN_CFG_WG_SUBNET", cfg.WireGuard.SubnetCIDR},
+		{"VPN_CFG_WG_GATEWAY", cfg.WireGuard.ServerVirtualIP},
+		{"VPN_CFG_WG_KEYDIR", cfg.WireGuard.KeyDir},
+		{"VPN_CFG_OVPN_ENABLED", strconv.FormatBool(cfg.OpenVPN.Enabled)},
+		{"VPN_CFG_OVPN_EASYRSA", cfg.OpenVPN.EasyRSADir},
+		{"VPN_CFG_OVPN_SERVERDIR", cfg.OpenVPN.ServerDir},
+		{"VPN_CFG_OVPN_MGMT_UDP", cfg.OpenVPN.ManagementUDPAddr},
+		{"VPN_CFG_OVPN_MGMT_TCP", cfg.OpenVPN.ManagementTCPAddr},
+		{"VPN_CFG_OVPN_UDP_PORT", strconv.Itoa(cfg.OpenVPN.UDPPort)},
+		{"VPN_CFG_OVPN_TCP_PORT", strconv.Itoa(cfg.OpenVPN.TCPPort)},
+		{"VPN_CFG_DNS_RESOLVER", cfg.DNS.ResolverAddr},
+	}
+	for _, pair := range kv {
+		fmt.Printf("%s='%s'\n", pair[0], strings.ReplaceAll(pair[1], "'", `'\''`))
+	}
 }

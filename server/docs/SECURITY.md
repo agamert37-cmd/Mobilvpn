@@ -126,3 +126,19 @@ Kurulum betikleri de gerçek `wg`, `easyrsa`, `openvpn`, `unbound`,
 `nftables` araçlarına karşı canlı olarak çalıştırılıp doğrulanmıştır
 (çekirdek WireGuard arayüz desteği olmayan bir kum havuzunda test
 edildiğinden, yalnızca gerçek bir `wg0` arayüzü gerektiren adımlar hariç).
+
+## Çalışan bir kurulumu denetlemek
+
+`scripts/verify.sh`, bu belgedeki güvenlik iddialarının çoğunu **canlı
+sistem üzerinde** kontrol eder ve şu üç sessiz arıza sınıfını özellikle
+hedefler:
+
+1. **Anahtar ayrışması** — `wg0` arayüzünün gerçekten kullandığı genel
+   anahtar ile API'nin istemcilere dağıttığı anahtar farklıysa hiçbir el
+   sıkışma tamamlanmaz, ama hiçbir bileşen hata da vermez.
+2. **Süresi dolmuş CRL** — easy-rsa'nın varsayılan CRL ömrü 180 gündür;
+   dolduğunda OpenVPN *tüm* istemcileri reddeder.
+3. **Açık çözümleyici** — unbound yanlışlıkla `0.0.0.0:53` dinlerse hem bir
+   DDoS yansıtma aracına dönüşür hem de tünel dışından sorgu kabul eder.
+
+Anahtar/sertifika dosya izinleri (600) de aynı betikte doğrulanır.

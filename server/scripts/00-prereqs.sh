@@ -25,6 +25,12 @@ PACKAGES=(
   curl
   ca-certificates
   chrony
+  # openssl: 30-openvpn-setup.sh and 60-vpn-api-service.sh generate secrets
+  # with it. Present on most Ubuntu images but NOT guaranteed on minimal
+  # ones, and a missing binary would fail the install halfway through.
+  openssl
+  # qrencode: used by test-peer.sh to print a scannable WireGuard config,
+  # which is how an operator proves the tunnel itself works end to end.
   qrencode
 )
 

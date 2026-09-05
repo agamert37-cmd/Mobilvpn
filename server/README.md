@@ -37,6 +37,7 @@ dosyalarına bakın.
 server/
   api/            Go modülü (vpn-api) — yönetim API'si ve tünel orkestrasyon mantığı
   scripts/        Ubuntu kurulum/sertleştirme betikleri (00-70, numaralı, sırayla çalışır)
+                  + verify.sh (dağıtım doktoru) ve test-peer.sh (gerçek tünel testi)
   systemd/        Kalıcı olarak /etc/systemd/system altına kopyalanan servis birimleri
   nft/            nftables güvenlik duvarı şablonu
   config/         config.json ve nodes.json şablonları/örnekleri
@@ -91,6 +92,38 @@ Her betik, makul varsayılanlarla çalışır ama şunları özelleştirebilirsi
 
 Betikler ayrıca tek tek de çalıştırılabilir (`scripts/00-prereqs.sh`, ...),
 tümü idempotenttir (ikinci çalıştırma güvenlidir).
+
+## Doğrulama ve sorun giderme
+
+Kurulumdan sonra (ya da bir şeyler bozulduğunda) iki araç var:
+
+```bash
+sudo /opt/mobilvpn/scripts/verify.sh
+```
+
+Canlı kurulumu uçtan uca denetler ve **ilk hatada durmaz** — bulduğu her
+sorunu düzeltme ipucuyla birlikte listeler: servis durumları, `ip_forward`/BBR,
+WireGuard anahtar tutarlılığı (arayüzün gerçekten kullandığı anahtar ile
+istemcilere dağıtılan anahtar aynı mı — ayrışırsa hiçbir el sıkışma çalışmaz),
+dosya izinleri, **OpenVPN CRL süresi** (dolarsa OpenVPN tüm istemcileri
+reddeder, gözden kaçması kolay bir arıza), nftables NAT/izolasyon/DNS
+kuralları, unbound'un açık çözümleyici olup olmadığı, API sağlığı ve TLS
+sertifika ömrü. Kritik bir hata varsa çıkış kodu 1'dir.
+
+```bash
+sudo /opt/mobilvpn/scripts/test-peer.sh
+```
+
+Gerçek bir tek kullanımlık WireGuard peer'ı **üretim API yolundan geçerek**
+oluşturur (IPAM, `wg set`, connect yanıt sözleşmesi — hepsi gerçek) ve
+taranabilir bir QR kod ile istemci yapılandırması basar. Böylece tüneli
+resmî WireGuard uygulamasıyla, Android istemcisinden bağımsız olarak
+doğrulayabilirsiniz. Özel anahtar sunucuya hiç gönderilmez (bring-your-own-key
+yolu). Test bitince: `sudo ./test-peer.sh --disconnect <sessionId>`.
+
+Ek olarak `vpn-api -print-config`, config.json'ı gerçek ayrıştırıcısıyla
+okuyup etkin değerleri kabuk değişkenleri olarak basar (yukarıdaki iki betik
+de bunu kullanır, böylece bash içinde JSON ayrıştırmaya gerek kalmaz).
 
 ## Geliştirme / test
 
