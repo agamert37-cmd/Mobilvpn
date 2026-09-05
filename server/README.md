@@ -44,17 +44,65 @@ server/
   nft/            nftables güvenlik duvarı şablonu
   config/         config.json ve nodes.json şablonları/örnekleri
   docs/           Mimari, API ve güvenlik dokümantasyonu
-  install.sh      Tüm betikleri sırayla çalıştıran orkestratör
+  install.sh      Tüm betikleri sırayla çalıştıran orkestratör + kurulum sihirbazı
+  bootstrap.sh    Tek satırlık kurulum: depoyu GitHub'dan çekip install.sh'ı çalıştırır
 ```
 
-## Hızlı kurulum
+## Hızlı kurulum (tek satır)
 
-Taze bir Ubuntu 22.04/24.04 sunucuda, root olarak:
+Taze bir Ubuntu 22.04/24.04 sunucuya SSH ile bağlanın ve şunu yapıştırın —
+depoyu GitHub'dan kendisi çeker, gerekli paketleri kurar ve **kurulum
+sihirbazını** başlatır:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/agamert37-cmd/Mobilvpn/main/server/bootstrap.sh | sudo bash
+```
+
+Sihirbaz sırayla şunları sorar (hepsinin makul bir varsayılanı vardır, Enter
+geçer):
+
+| Soru | Not |
+|---|---|
+| Alan adı | Android uygulamasının bağlanacağı ad; sunucunun genel IP'si (otomatik tespit edilip gösterilir) buna işaret etmeli. Boş bırakılırsa TLS'siz, yalnızca test amaçlı bir kurulum önerilir |
+| Bölge etiketi | Uygulamada `clusterRegion` olarak görünür |
+| Düğüm kimliği | Filo içinde bu sunucuyu ayırt eder |
+| SSH portu | `sshd` yapılandırmasından **otomatik okunur**; güvenlik duvarı yalnızca bunu açık bırakır |
+| IKEv2/IPsec | İsteğe bağlı ikinci protokol (varsayılan: hayır) |
+
+Sonunda bir özet gösterilir ve onay istenir; onaylamazsanız hiçbir değişiklik
+yapılmadan çıkar.
+
+> Sorular `/dev/tty`'den okunur, stdin'den değil — `curl | sudo bash` içinde
+> stdin betiğin kendisidir. Bu yüzden tek satırlık kurulum da tam etkileşimlidir.
+
+### Sorusuz (otomatik) kurulum
+
+CI, imaj üretimi ya da toplu dağıtım için sihirbazı tamamen atlayın:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/agamert37-cmd/Mobilvpn/main/server/bootstrap.sh \
+  | sudo bash -s -- --domain vpn.example.com --yes --with-ikev2
+```
+
+`-s --`'den sonraki her şey `server/install.sh`'a olduğu gibi aktarılır.
+`bootstrap.sh` kendisi de üç ortam değişkeni tanır:
+
+| Değişken | Varsayılan | Anlamı |
+|---|---|---|
+| `VPN_REPO_URL` | `https://github.com/agamert37-cmd/Mobilvpn.git` | Klonlanacak depo |
+| `VPN_REPO_BRANCH` | `main` | Kurulacak dal |
+| `VPN_SRC_DIR` | `/opt/mobilvpn-src` | Kaynak kodun tutulacağı yer (ikinci çalıştırmada güncellenir) |
+
+### Depo elinizdeyse
 
 ```bash
 cd server
 sudo VPN_NODE_REGION="İstanbul, TR" ./install.sh --domain vpn.example.com
 ```
+
+Argümansız çalıştırırsanız yine sihirbaz açılır. `--yes` sorusuz ilerler,
+`--skip-tls` / `--skip-firewall` ilgili adımı atlar, `--with-ikev2` IKEv2'yi
+ekler.
 
 `--domain`, Android uygulamasının bağlanacağı ve TLS sertifikasının (Let's
 Encrypt / certbot) alınacağı genel ana bilgisayar adıdır — DNS'te bu sunucunun

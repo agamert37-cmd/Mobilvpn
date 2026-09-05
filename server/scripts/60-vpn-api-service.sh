@@ -30,6 +30,10 @@ OVPN_TCP_PORT="${VPN_OVPN_TCP_PORT:-443}"
 OVPN_SUBNET="${VPN_OVPN_SUBNET:-10.77.0.0/16}"
 IKEV2_SUBNET="${VPN_IKEV2_SUBNET:-10.88.0.0/16}"
 # IKEv2 opt-in: install.sh --with-ikev2 (ya da VPN_ENABLE_IKEV2=1) ile açılır.
+# --skip-tls ile kurulduysa config'de de TLS kapalı olmalı; aksi hâlde
+# vpn-api var olmayan sertifika dosyalarını açmaya çalışıp açılışta ölür.
+TLS_ENABLED="true"
+[ "${VPN_SKIP_TLS:-0}" = "1" ] && TLS_ENABLED="false"
 IKEV2_ENABLED="${VPN_ENABLE_IKEV2:-0}"
 [ "$IKEV2_ENABLED" = "1" ] && IKEV2_ENABLED="true" || IKEV2_ENABLED="false"
 
@@ -72,6 +76,7 @@ else
     "OVPN_SUBNET=$OVPN_SUBNET" \
     "IKEV2_SUBNET=$IKEV2_SUBNET" \
     "IKEV2_ENABLED=$IKEV2_ENABLED" \
+    "TLS_ENABLED=$TLS_ENABLED" \
     "FLEET_SECRET=$FLEET_SECRET"
   chmod 600 "$CONFIG_PATH"
   log_ok "Yazıldı: $CONFIG_PATH"

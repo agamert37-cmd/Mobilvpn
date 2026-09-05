@@ -34,19 +34,97 @@ require_ubuntu() {
   fi
 }
 
+# have_tty reports whether there's a terminal we can ask questions on.
+#
+# Note this deliberately checks /dev/tty rather than stdin: the whole point
+# of the `curl -fsSL ... | sudo bash` install is that stdin is the *script*,
+# not the keyboard, so `read` from stdin would silently consume the script
+# itself (or read EOF immediately). Everything interactive below therefore
+# goes through /dev/tty.
+have_tty() {
+  # The 2>/dev/null has to come FIRST: bash applies redirections left to
+  # right and reports a failing one on the *current* stderr, so putting it
+  # last would let "No such device or address" leak out on every
+  # non-interactive run.
+  [ -e /dev/tty ] && [ -r /dev/tty ] && : 2>/dev/null >/dev/tty
+}
+
+# ask prompts for a value on the terminal, offering a default. Falls back to
+# the default without prompting when running unattended.
+#   ask VARNAME "Question" "default"
+ask() {
+  local __var="$1" prompt="$2" default="${3:-}" reply=""
+  if [ "${VPN_ASSUME_YES:-0}" = "1" ] || ! have_tty; then
+    printf -v "$__var" '%s' "$default"
+    return
+  fi
+  if [ -n "$default" ]; then
+    printf '%b?%b %s [%s]: ' "$VPN_LIB_COLOR_INFO" "$VPN_LIB_COLOR_RESET" "$prompt" "$default" >/dev/tty
+  else
+    printf '%b?%b %s: ' "$VPN_LIB_COLOR_INFO" "$VPN_LIB_COLOR_RESET" "$prompt" >/dev/tty
+  fi
+  IFS= read -r reply </dev/tty || reply=""
+  printf -v "$__var" '%s' "${reply:-$default}"
+}
+
+# ask_yes_no returns 0 for yes. default should be "y" or "n".
+ask_yes_no() {
+  local prompt="$1" default="${2:-n}" reply=""
+  if [ "${VPN_ASSUME_YES:-0}" = "1" ] || ! have_tty; then
+    [ "$default" = "y" ]
+    return
+  fi
+  local hint="[y/N]"
+  [ "$default" = "y" ] && hint="[Y/n]"
+  printf '%b?%b %s %s: ' "$VPN_LIB_COLOR_INFO" "$VPN_LIB_COLOR_RESET" "$prompt" "$hint" >/dev/tty
+  IFS= read -r reply </dev/tty || reply=""
+  reply="${reply:-$default}"
+  case "$reply" in
+    y | Y | yes | YES | Yes | e | E | evet | EVET) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # confirm prompts the operator before a risky/irreversible step, unless
 # VPN_ASSUME_YES=1 is set in the environment (used by install.sh's --yes and
 # by CI/non-interactive runs).
 confirm() {
-  local prompt="$1"
-  if [ "${VPN_ASSUME_YES:-0}" = "1" ]; then
-    return 0
+  ask_yes_no "$1" "n"
+}
+
+# detect_ssh_port reads the port sshd is actually configured for.
+#
+# Asking the operator to type this from memory is how people lock
+# themselves out of a remote box, so we read it from the config (and any
+# drop-ins) and only fall back to 22 if nothing is set.
+detect_ssh_port() {
+  local port=""
+  if [ -r /etc/ssh/sshd_config ]; then
+    port="$(awk '/^[[:space:]]*Port[[:space:]]+[0-9]+/ {print $2}' /etc/ssh/sshd_config 2>/dev/null | tail -n1)"
   fi
-  read -r -p "$prompt [y/N] " reply
-  case "$reply" in
-    y|Y|yes|YES) return 0 ;;
-    *) return 1 ;;
-  esac
+  if [ -z "$port" ] && [ -d /etc/ssh/sshd_config.d ]; then
+    port="$(awk '/^[[:space:]]*Port[[:space:]]+[0-9]+/ {print $2}' /etc/ssh/sshd_config.d/*.conf 2>/dev/null | tail -n1)"
+  fi
+  # A live listener is the most trustworthy source of all.
+  if [ -z "$port" ] && command -v ss >/dev/null 2>&1; then
+    port="$(ss -lntpH 2>/dev/null | awk '/sshd/ {split($4,a,":"); print a[length(a)]}' | head -n1)"
+  fi
+  echo "${port:-22}"
+}
+
+# detect_public_ip finds this host's public IPv4, preferring a local global
+# address and only then asking an external service (which some hardened
+# hosts can't reach anyway).
+detect_public_ip() {
+  local ip=""
+  # Skip RFC1918 and CGNAT (100.64/10): a box behind either isn't reachable
+  # at that address, so it would be the wrong thing to put in a cert SAN.
+  ip="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 |
+    grep -vE '^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.)' | head -n1)"
+  if [ -z "$ip" ] && command -v curl >/dev/null 2>&1; then
+    ip="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+  fi
+  echo "$ip"
 }
 
 # detect_wan_iface prints the network interface that owns the default
