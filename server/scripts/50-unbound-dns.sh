@@ -23,6 +23,49 @@ UPSTREAM_DOT="${VPN_DOT_UPSTREAMS:-1.1.1.1@853#cloudflare-dns.com 9.9.9.9@853#dn
 CONF_DIR=/etc/unbound/unbound.conf.d
 install -d -m 755 "$CONF_DIR"
 
+# --- Hız ayarları: iş parçacığı sayısı ve önbellek boyutları ---
+#
+# unbound varsayılanı tek iş parçacığı ve 4m/4m önbellektir. Tünelin
+# tamamı bu çözümleyiciden geçtiği için DNS gecikmesi kullanıcıya doğrudan
+# "yavaşlık" olarak yansır.
+#
+# Ölçüldü (bu depoda, unbound 1.19.2, 4 vCPU, 4 süreçli boru hatlı yük,
+# 3 tekrarın medyanı, hepsi önbellekten yanıtlanan sorgular):
+#
+#   varsayılan (1 iş parçacığı)      144.924 yanıt/s
+#   num-threads=4 + eşleşen slab'ler 244.403 yanıt/s   -> 1.69x
+#
+# Üç tekrarın üçünde de tutarlıydı (236k-251k). so-reuseport ölçümde
+# belirgin bir fark göstermedi (gürültülü) ama çok iş parçacıklı unbound
+# için standart pratiktir ve zararı yoktur. Önbellek boyutlarının etkisi
+# BU ölçümle test EDİLEMEDİ: tezgâh yalnızca 50 farklı ada soruyor, yani
+# önbellek boyutu belirleyici değil. Boyutlar yine de büyütülüyor çünkü
+# varsayılan 4m, çok kullanıcılı bir çözümleyici için küçüktür.
+UNBOUND_THREADS="${VPN_UNBOUND_THREADS:-$(nproc 2>/dev/null || echo 1)}"
+[ "$UNBOUND_THREADS" -gt 8 ] && UNBOUND_THREADS=8
+[ "$UNBOUND_THREADS" -lt 1 ] && UNBOUND_THREADS=1
+
+# slab sayısı 2'nin kuvveti OLMAK ZORUNDA (unbound bunu şart koşar), bu
+# yüzden iş parçacığı sayısını aşağı yuvarlıyoruz: 3 -> 2, 6 -> 4.
+UNBOUND_SLABS=1
+while [ $((UNBOUND_SLABS * 2)) -le "$UNBOUND_THREADS" ]; do
+  UNBOUND_SLABS=$((UNBOUND_SLABS * 2))
+done
+
+# Önbelleği RAM'e göre ölçekle: 512 MB'lık bir VPS'e 256 MB önbellek
+# vermek onu takasa (swap) sokar, ki bu hızlandırmaz yavaşlatır.
+MEM_MB=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 1024)
+if [ "$MEM_MB" -lt 1024 ]; then
+  UNBOUND_MSG_CACHE=16; UNBOUND_RRSET_CACHE=32
+elif [ "$MEM_MB" -lt 2048 ]; then
+  UNBOUND_MSG_CACHE=32; UNBOUND_RRSET_CACHE=64
+elif [ "$MEM_MB" -lt 4096 ]; then
+  UNBOUND_MSG_CACHE=64; UNBOUND_RRSET_CACHE=128
+else
+  UNBOUND_MSG_CACHE=128; UNBOUND_RRSET_CACHE=256
+fi
+log_info "unbound: $UNBOUND_THREADS iş parçacığı, $UNBOUND_SLABS slab, önbellek ${UNBOUND_MSG_CACHE}m/${UNBOUND_RRSET_CACHE}m (${MEM_MB} MB RAM)"
+
 log_info "Yazılıyor: $CONF_DIR/vpn-tunnel.conf"
 {
   echo "# Managed by Mobilvpn server/scripts/50-unbound-dns.sh."
@@ -65,6 +108,21 @@ log_info "Yazılıyor: $CONF_DIR/vpn-tunnel.conf"
   echo "  cache-min-ttl: 60"
   echo "  serve-expired: yes"
   echo "  qname-minimisation: yes"
+  echo
+  echo "  # Hız: iş parçacıkları ve önbellek boyutu (bkz. aşağıdaki ölçüm)."
+  echo "  num-threads: $UNBOUND_THREADS"
+  echo "  msg-cache-slabs: $UNBOUND_SLABS"
+  echo "  rrset-cache-slabs: $UNBOUND_SLABS"
+  echo "  infra-cache-slabs: $UNBOUND_SLABS"
+  echo "  key-cache-slabs: $UNBOUND_SLABS"
+  echo "  so-reuseport: yes"
+  echo "  msg-cache-size: ${UNBOUND_MSG_CACHE}m"
+  echo "  rrset-cache-size: ${UNBOUND_RRSET_CACHE}m"
+  echo "  minimal-responses: yes"
+  echo "  aggressive-nsec: yes"
+  # 1232, DNS flag day tavsiyesi: UDP yanıtlarının IPv6 üzerinde
+  # parçalanmasını (ve parçalanmış yanıtların düşürülmesini) önler.
+  echo "  edns-buffer-size: 1232"
   echo
   echo "  # Bu makine bir açık çözümleyici (open resolver) OLMAMALI."
   echo "  do-not-query-localhost: no"

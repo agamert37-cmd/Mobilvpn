@@ -142,6 +142,7 @@ func emitShellConfig(cfg config.Config) {
 		{"VPN_CFG_WG_SUBNET", cfg.WireGuard.SubnetCIDR},
 		{"VPN_CFG_WG_GATEWAY", cfg.WireGuard.ServerVirtualIP},
 		{"VPN_CFG_WG_KEYDIR", cfg.WireGuard.KeyDir},
+		{"VPN_CFG_WG_MTU", strconv.Itoa(cfg.WireGuard.MTU)},
 		{"VPN_CFG_WG_IPV6_ENABLED", strconv.FormatBool(cfg.WireGuard.IPv6Enabled)},
 		{"VPN_CFG_WG_SUBNET_V6", cfg.WireGuard.SubnetCIDRv6},
 		{"VPN_CFG_WG_GATEWAY_V6", cfg.WireGuard.ServerVirtualIPv6},

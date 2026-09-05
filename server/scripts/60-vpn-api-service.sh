@@ -25,6 +25,35 @@ WG_GATEWAY_V6="${VPN_WG_GATEWAY_V6:-fd00:66::1}"
 # aynı testtir; ikisi ayrışırsa API, taşınamayan bir rotayı reklam eder.
 IPV6_ENABLED="false"
 [ "$(detect_ipv6_support)" = "1" ] && IPV6_ENABLED="true"
+# --- İstemciye bildirilen tünel MTU'su ---
+#
+# Bu sabit bir sayı OLAMAZ. wg-quick, MTU= verilmediğinde arayüzü
+# "varsayılan rotanın MTU'su - 80" ile açar (bkz. /usr/bin/wg-quick,
+# set_mtu_up). WAN MTU'su 1500 olmayan makinelerde -- GCP 1460, pek çok
+# bulut/overlay 1400-1450, PPPoE 1492 -- bu değer 1420 değildir.
+#
+# config.json'daki MTU ise Android istemcisinin kendi TUN arayüzüne
+# uyguladığı değerdir. İkisi ayrışırsa istemci, sunucunun arayüzüne ve
+# yola sığmayan paketler üretir: her tam boy paket parçalanır ya da DF
+# ayarlıysa tamamen düşer. Yani "bağlanıyor ama yavaş/takılıyor".
+#
+# Bu yüzden yer gerçeği olarak canlı arayüzün MTU'sunu okuyoruz; arayüz
+# henüz yoksa wg-quick'in formülünü birebir tekrarlıyoruz.
+WG_MTU="${VPN_WG_MTU:-}"
+if [ -z "$WG_MTU" ]; then
+  WG_MTU="$(ip -o link show "$WG_IFACE" 2>/dev/null |
+    awk '{for (i = 1; i <= NF; i++) if ($i == "mtu") { print $(i + 1); exit }}')"
+fi
+if [ -z "$WG_MTU" ]; then
+  WAN_MTU="$(ip -o link show "$(ip -4 route show default 2>/dev/null |
+    awk '/dev/ {for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit }}')" 2>/dev/null |
+    awk '{for (i = 1; i <= NF; i++) if ($i == "mtu") { print $(i + 1); exit }}')"
+  WG_MTU=$(( ${WAN_MTU:-1500} - 80 ))
+fi
+# 1280, IPv6'nın zorunlu asgari MTU'su; altına inmek çift yığın tüneli bozar.
+[ "$WG_MTU" -lt 1280 ] && WG_MTU=1280
+log_info "İstemciye bildirilecek WireGuard MTU: $WG_MTU"
+
 OVPN_UDP_PORT="${VPN_OVPN_UDP_PORT:-1194}"
 OVPN_TCP_PORT="${VPN_OVPN_TCP_PORT:-443}"
 OVPN_SUBNET="${VPN_OVPN_SUBNET:-10.77.0.0/16}"
@@ -68,6 +97,7 @@ else
     "WG_PORT=$WG_PORT" \
     "WG_SUBNET=$WG_SUBNET" \
     "WG_GATEWAY=$WG_GATEWAY" \
+    "WG_MTU=$WG_MTU" \
     "WG_SUBNET_V6=$WG_SUBNET_V6" \
     "WG_GATEWAY_V6=$WG_GATEWAY_V6" \
     "IPV6_ENABLED=$IPV6_ENABLED" \

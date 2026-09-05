@@ -116,6 +116,52 @@ kendisini içeren tek elemanlı bir liste döner — sıfır yapılandırma gere
 - unbound'da `prefetch`/`serve-expired` — DNS gecikmesi algısını azaltır.
 - Yönetim API'si tamamen `net/http` + stdlib JSON; harici çatı yükü yok.
 
+### MTU: neden sabit bir sayı değil
+
+`config.json` içindeki `wireguard.mtu`, Android istemcisinin kendi TUN
+arayüzüne uyguladığı değerdir. wg-quick ise sunucu tarafındaki arayüzü
+"varsayılan rotanın MTU'su − 80" ile açar (`/usr/bin/wg-quick`,
+`set_mtu_up`).
+
+İkisi ayrışırsa istemci, sunucunun arayüzüne ve yola sığmayan paketler
+üretir; sonuç parçalanma ya da DF ayarlıysa sessiz düşmedir — kullanıcıya
+"bağlanıyor ama yavaş/takılıyor" diye yansır.
+
+Sabit `1420` yalnızca WAN MTU'su 1500 olan makinelerde doğrudur. Bu
+kolayca gözden kaçar çünkü 1500 − 80 = 1420. Oysa GCP 1460, pek çok
+bulut/overlay ağı 1400–1450, PPPoE 1492 kullanır; bu depo geliştirilirken
+kullanılan makinenin WAN MTU'su da 1400'dü, yani doğru değer 1320'ydi.
+
+Bu yüzden `60-vpn-api-service.sh` değeri canlı arayüzden okur (yer
+gerçeği), arayüz henüz yoksa wg-quick'in formülünü tekrarlar ve IPv6'nın
+zorunlu asgarisi olan 1280'in altına inmez. `verify.sh` ikisinin
+uyuştuğunu ayrıca denetler.
+
+### unbound: ölçülmüş iş parçacığı ayarı
+
+Tünelin tüm DNS'i bu çözümleyiciden geçtiği için gecikmesi doğrudan
+hissedilir. unbound varsayılanı tek iş parçacığıdır.
+
+Ölçüm (unbound 1.19.2, 4 vCPU, 4 süreçli boru hatlı yük, 3 tekrarın
+medyanı, tamamı önbellekten yanıtlanan sorgular):
+
+| yapılandırma | yanıt/s | taban |
+|---|---|---|
+| varsayılan (1 iş parçacığı) | 144.924 | — |
+| `num-threads=4` + eşleşen slab'ler | 244.403 | **1.69x** |
+
+Üç tekrarın üçünde de tutarlı (236k–251k). `so-reuseport` bu tezgâhta
+belirgin fark göstermedi (gürültülü) ama çok iş parçacıklı unbound için
+standart pratiktir. Önbellek boyutlarının etkisi bu ölçümle **test
+edilemedi** — tezgâh yalnızca 50 farklı ada soruyor — ama varsayılan 4m,
+çok kullanıcılı bir çözümleyici için küçük olduğundan RAM'e göre
+ölçekleniyor.
+
+İlk (yanıltıcı) ölçüm iki yapılandırma arasında hiç fark göstermemişti;
+sebebi sunucu değil, tezgâhın kendisiydi: GIL altındaki 16 Python
+iş parçacığı eşzamanlı `send`/`recv` yaparken darboğaz istemcideydi.
+Ayrı süreçlere ve boru hattına geçilince fark ortaya çıktı.
+
 ## Gizlilik için yapılan seçimler
 
 Ayrıntılı tehdit modeli ve no-logs politikası için **docs/SECURITY.md**'ye

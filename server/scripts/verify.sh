@@ -329,6 +329,23 @@ if [ "$VPN_CFG_TLS_ENABLED" = "true" ]; then
   fi
 fi
 
+# --- Hız: bildirilen MTU, arayüzün gerçek MTU'suyla uyuşmalı ---
+# wg-quick arayüzü "varsayılan rota MTU'su - 80" ile açar; config.json'daki
+# değer ise istemcinin kendi TUN'una uyguladığıdır. Ayrışırlarsa istemci,
+# yola sığmayan paketler üretir: parçalanma ya da sessiz düşme, yani
+# "bağlanıyor ama yavaş".
+if [ "$VPN_CFG_WG_ENABLED" = "true" ]; then
+  LIVE_MTU="$(ip -o link show "$VPN_CFG_WG_IFACE" 2>/dev/null |
+    awk '{for (i = 1; i <= NF; i++) if ($i == "mtu") { print $(i + 1); exit }}')"
+  if [ -z "$LIVE_MTU" ]; then
+    warn "$VPN_CFG_WG_IFACE arayüzü yok; MTU karşılaştırması yapılamadı"
+  elif [ "$LIVE_MTU" = "$VPN_CFG_WG_MTU" ]; then
+    ok "MTU tutarlı: config.json ve $VPN_CFG_WG_IFACE ikisi de $LIVE_MTU"
+  else
+    bad "MTU uyuşmuyor: config.json istemciye $VPN_CFG_WG_MTU bildiriyor ama $VPN_CFG_WG_IFACE $LIVE_MTU — istemci yola sığmayan paket üretir (VPN_WG_MTU=$LIVE_MTU ile 60-vpn-api-service.sh)"
+  fi
+fi
+
 section "Gizlilik (no-logs)"
 # Bu bölüm ürünün gizlilik vaadini denetler: hiçbir bileşen istemcinin
 # gerçek IP'sini kalıcı ya da okunabilir bir yere yazmamalı. Ölçümler ve

@@ -149,6 +149,8 @@ Her betik, makul varsayılanlarla çalışır ama şunları özelleştirebilirsi
 | `VPN_WG_PORT` / `VPN_WG_SUBNET` | `51820` / `10.66.0.0/16` | WireGuard dinleme portu ve tünel alt ağı |
 | `VPN_OVPN_UDP_PORT` / `VPN_OVPN_TCP_PORT` | `1194` / `443` | OpenVPN portları |
 | `VPN_WAN_IFACE` | otomatik algılanır | NAT/masquerade için WAN arayüzü |
+| `VPN_WG_MTU` | otomatik algılanır | İstemciye bildirilen tünel MTU'su. Canlı `wg0` arayüzünden okunur (wg-quick onu "WAN MTU - 80" yapar); **sabit 1420 varsaymayın**, WAN MTU'su 1500 olmayan bulutlarda yanlıştır |
+| `VPN_UNBOUND_THREADS` | `nproc` (en fazla 8) | unbound iş parçacığı sayısı; slab sayısı buna göre 2'nin kuvvetine yuvarlanır |
 | `VPN_ENABLE_IPV6` | otomatik algılanır | Çift yığın tünel. Ana bilgisayarda global IPv6 varsa açılır (IPv6 sızıntısını kapatır); yoksa hiç açılmaz. `1`/`0` ile zorlanabilir |
 | `VPN_WG_SUBNET_V6` | `fd00:66::/64` | Tünelin IPv6 (ULA) öneki |
 | `VPN_ENABLE_IKEV2` | `0` | IKEv2/IPsec kurulumu (`install.sh --with-ikev2` ile aynı) |
