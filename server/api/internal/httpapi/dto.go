@@ -60,6 +60,15 @@ type ConnectResponseDto struct {
 	MTU                        int      `json:"mtu,omitempty"`
 	PersistentKeepaliveSeconds int      `json:"persistentKeepaliveSeconds,omitempty"`
 	OvpnProfile                string   `json:"ovpnProfile,omitempty"`
+
+	// IKEv2 credentials. The username/password pair is what the OS-native
+	// IKEv2/IPsec MSCHAPv2 client profile needs; IKEv2ServerID is the
+	// identity to verify the server certificate against, and the CA PEM
+	// lets a client pin this server's own CA instead of the system store.
+	IKEv2ServerID  string `json:"ikev2ServerId,omitempty"`
+	IKEv2Username  string `json:"ikev2Username,omitempty"`
+	IKEv2Password  string `json:"ikev2Password,omitempty"`
+	IKEv2CACertPEM string `json:"ikev2CaCertPem,omitempty"`
 }
 
 // DisconnectRequestDto mirrors com.example.network.DisconnectRequestDto.

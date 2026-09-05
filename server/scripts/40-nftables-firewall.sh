@@ -21,6 +21,7 @@ OVPN_TCP_PORT="${VPN_OVPN_TCP_PORT:-443}"
 OVPN_UDP_DEV="${VPN_OVPN_UDP_DEV:-tun-udp}"
 OVPN_TCP_DEV="${VPN_OVPN_TCP_DEV:-tun-tcp}"
 OVPN_SUBNET="${VPN_OVPN_SUBNET:-10.77.0.0/16}"
+IKEV2_SUBNET="${VPN_IKEV2_SUBNET:-10.88.0.0/16}"
 API_PUBLIC_PORT="${VPN_API_PUBLIC_PORT:-8443}"
 
 log_info "Tespit edilen WAN arayüzü: $WAN_IFACE"
@@ -49,6 +50,7 @@ render_template "$TMPL" "$OUT" \
   "OVPN_UDP_DEV=$OVPN_UDP_DEV" \
   "OVPN_TCP_DEV=$OVPN_TCP_DEV" \
   "OVPN_SUBNET=$OVPN_SUBNET" \
+  "IKEV2_SUBNET=$IKEV2_SUBNET" \
   "API_PUBLIC_PORT=$API_PUBLIC_PORT"
 
 log_info "Kural seti sözdizimi kontrol ediliyor..."

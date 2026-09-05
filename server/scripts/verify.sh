@@ -210,6 +210,51 @@ if [ "$VPN_CFG_OVPN_ENABLED" = "true" ]; then
   done
 fi
 
+if [ "$VPN_CFG_IKEV2_ENABLED" = "true" ]; then
+  section "IKEv2 (strongSwan)"
+  check_service strongswan
+
+  # Ubuntu enables the legacy starter by default and both bind UDP 500/4500,
+  # so a leftover starter silently keeps the swanctl daemon from working.
+  if systemctl is-enabled strongswan-starter.service >/dev/null 2>&1; then
+    bad "strongswan-starter.service hâlâ etkin — swanctl tabanlı strongswan.service ile 500/4500 portu için çakışır (systemctl disable --now strongswan-starter)"
+  else
+    ok "eski strongswan-starter servisi devre dışı"
+  fi
+
+  for f in "$VPN_CFG_IKEV2_CERT" "$VPN_CFG_IKEV2_KEY"; do
+    if [ -s "$f" ]; then
+      ok "sertifika/anahtar mevcut: $f"
+    else
+      bad "eksik: $f (scripts/35-ikev2-setup.sh)"
+    fi
+  done
+
+  # A client verifies the server against a SAN in this certificate; if the
+  # configured identity isn't in there, every connection fails auth.
+  if [ -s "$VPN_CFG_IKEV2_CERT" ] && [ -n "$VPN_CFG_IKEV2_SERVER_ID" ]; then
+    if ipsec pki --print --in "$VPN_CFG_IKEV2_CERT" 2>/dev/null | grep -q "altNames:.*$VPN_CFG_IKEV2_SERVER_ID"; then
+      ok "sunucu sertifikasının SAN'ı yapılandırılmış kimlikle eşleşiyor ($VPN_CFG_IKEV2_SERVER_ID)"
+    else
+      bad "sertifikanın SAN'ı '$VPN_CFG_IKEV2_SERVER_ID' içermiyor — istemciler sunucuyu doğrulayamaz (35-ikev2-setup.sh'ı doğru VPN_API_DOMAIN ile tekrar çalıştırın)"
+    fi
+  fi
+
+  if swanctl --stats >/dev/null 2>&1; then
+    ok "swanctl daemon'a bağlanabiliyor"
+    LOADED="$(swanctl --list-conns --raw 2>/dev/null | grep -o 'sess_[A-Za-z0-9_-]*' | sort -u | wc -l)"
+    ok "yüklü oturum bağlantısı: $LOADED"
+  else
+    bad "swanctl daemon'a ulaşamıyor — vpn-api oturum açamaz/telemetri okuyamaz (journalctl -u strongswan)"
+  fi
+
+  if nft list ruleset 2>/dev/null | grep -q "udp dport { 500, 4500 }"; then
+    ok "IKEv2 portları (500/4500) güvenlik duvarında açık"
+  else
+    warn "nftables'ta 500/4500 kuralı görünmüyor — istemciler bağlanamayabilir (scripts/40-nftables-firewall.sh)"
+  fi
+fi
+
 section "Güvenlik duvarı (nftables)"
 RULESET="$(nft list ruleset 2>/dev/null)"
 if [ -z "$RULESET" ]; then

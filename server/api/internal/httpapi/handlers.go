@@ -99,12 +99,7 @@ func (a *App) handleConnect(w http.ResponseWriter, r *http.Request) {
 	case session.ProtocolOpenVPNTCP:
 		a.connectOpenVPN(w, r, req, sessionID, started, true)
 	case session.ProtocolIKEv2:
-		writeJSON(w, http.StatusNotImplemented, ConnectResponseDto{
-			Success:  false,
-			Status:   "UNSUPPORTED",
-			ServerID: req.ServerID,
-			Message:  "IKEv2/IPsec bu sunucu sürümünde henüz desteklenmiyor. Lütfen WireGuard veya OpenVPN protokollerini kullanın.",
-		})
+		a.connectIKEv2(w, req, sessionID, started)
 	default:
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Bilinmeyen protokol: %q", req.Protocol))
 	}
@@ -289,6 +284,75 @@ func (a *App) connectOpenVPN(w http.ResponseWriter, r *http.Request, req Connect
 	})
 }
 
+// connectIKEv2 issues one session-scoped EAP credential and pins its tunnel
+// address. Like OpenVPN — and unlike WireGuard, where adding the peer is
+// itself the whole handshake setup — the tunnel isn't up when this returns;
+// the client still has to dial in, so the status says PROVISIONED rather
+// than claiming an established tunnel.
+func (a *App) connectIKEv2(w http.ResponseWriter, req ConnectRequestDto, sessionID string, started time.Time) {
+	if a.ikev2 == nil || !a.cfg.IKEv2.Enabled {
+		writeJSON(w, http.StatusServiceUnavailable, ConnectResponseDto{
+			Success: false, Status: "UNAVAILABLE", ServerID: req.ServerID,
+			Message: "Bu düğümde IKEv2 etkin değil.",
+		})
+		return
+	}
+	if !a.ikev2.Ready() {
+		writeJSON(w, http.StatusServiceUnavailable, ConnectResponseDto{
+			Success: false, Status: "UNAVAILABLE", ServerID: req.ServerID,
+			Message: "strongSwan henüz kurulmadı (scripts/35-ikev2-setup.sh).",
+		})
+		return
+	}
+
+	virtualIP, err := a.ikev2Pool.Allocate(sessionID)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, ConnectResponseDto{
+			Success: false, Status: "UNAVAILABLE", ServerID: req.ServerID,
+			Message: "Sanal IP havuzu dolu.",
+		})
+		return
+	}
+
+	cred, err := a.ikev2.Provision(sessionID, virtualIP.String())
+	if err != nil {
+		a.ikev2Pool.Release(virtualIP)
+		a.logger.Error("ikev2 Provision failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ConnectResponseDto{
+			Success: false, Status: "ERROR", ServerID: req.ServerID,
+			Message: "IKEv2 oturumu oluşturulamadı.",
+		})
+		return
+	}
+
+	sess := &session.Session{
+		ID: sessionID, NodeID: a.cfg.NodeID, Protocol: session.ProtocolIKEv2,
+		VirtualIP: virtualIP.String(), PeerKey: sessionID, Ephemeral: false,
+		CreatedAt: time.Now(), LastSeenAt: time.Now(),
+	}
+	a.sessions.Put(sess)
+	if err := a.sessions.Persist(); err != nil {
+		a.logger.Warn("persisting session state failed", "error", err)
+	}
+
+	writeJSON(w, http.StatusOK, ConnectResponseDto{
+		Success:             true,
+		SessionID:           sessionID,
+		Status:              "PROVISIONED",
+		VirtualIP:           virtualIP.String(),
+		ServerID:            req.ServerID,
+		AssignedPort:        500,
+		HandshakeDurationMs: time.Since(started).Milliseconds(),
+		Message:             "IKEv2 kimlik bilgisi oluşturuldu; istemci bağlantıyı başlattığında tünel etkinleşecek.",
+		Protocol:            string(session.ProtocolIKEv2),
+		Endpoint:            a.cfg.PublicEndpointHost,
+		IKEv2ServerID:       cred.ServerID,
+		IKEv2Username:       cred.Username,
+		IKEv2Password:       cred.Password,
+		IKEv2CACertPEM:      cred.CACertPEM,
+	})
+}
+
 func (a *App) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
@@ -345,13 +409,18 @@ func (a *App) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 	}
 	a.sessions.Touch(sessionID)
 
-	var rx, tx uint64
+	// Every tunnel backend reports its counters from the SERVER's point of
+	// view, but the app shows them to a person looking at their own device:
+	// what the server sent out is that person's download, and what the
+	// server received is their upload. The names below are deliberately
+	// client-perspective so the mapping can't quietly invert again.
+	var clientDownBytes, clientUpBytes uint64
 	health := "OPTIMAL"
 	switch sess.Protocol {
 	case session.ProtocolWireGuard:
 		if a.wg != nil {
 			if peer, err := a.wg.FindPeer(r.Context(), sess.PeerKey); err == nil && peer != nil {
-				rx, tx = peer.ReceiveBytes, peer.TransmitBytes
+				clientDownBytes, clientUpBytes = peer.TransmitBytes, peer.ReceiveBytes
 				if !peer.LatestHandshake.IsZero() && time.Since(peer.LatestHandshake) > 3*time.Minute {
 					health = "DEGRADED"
 				}
@@ -364,22 +433,31 @@ func (a *App) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 			var stat *openvpn.ClientStat
 			stat, _ = a.ovpn.Stats(sess.PeerKey, sess.Protocol == session.ProtocolOpenVPNTCP)
 			if stat != nil {
-				rx, tx = stat.BytesReceived, stat.BytesSent
+				clientDownBytes, clientUpBytes = stat.BytesSent, stat.BytesReceived
+			} else {
+				health = "CONNECTING"
+			}
+		}
+	case session.ProtocolIKEv2:
+		if a.ikev2 != nil {
+			stat, _ := a.ikev2.Stats(sess.PeerKey)
+			if stat != nil && stat.Established {
+				clientDownBytes, clientUpBytes = stat.BytesOut, stat.BytesIn
 			} else {
 				health = "CONNECTING"
 			}
 		}
 	}
 
-	down, up, history := sess.Sample(rx, tx)
+	down, up, history := sess.Sample(clientDownBytes, clientUpBytes)
 	writeJSON(w, http.StatusOK, ServerTelemetryDto{
 		ServerID:               a.cfg.NodeID,
 		Status:                 "CONNECTED",
 		VirtualIP:              sess.VirtualIP,
 		DownloadSpeedMbps:      down,
 		UploadSpeedMbps:        up,
-		TotalDownloadedBytes:   int64(rx),
-		TotalUploadedBytes:     int64(tx),
+		TotalDownloadedBytes:   int64(clientDownBytes),
+		TotalUploadedBytes:     int64(clientUpBytes),
 		SessionDurationSeconds: int64(time.Since(sess.CreatedAt).Seconds()),
 		ServerHealth:           health,
 		TrafficSamples:         history,

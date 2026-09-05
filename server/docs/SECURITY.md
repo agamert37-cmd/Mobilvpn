@@ -113,6 +113,23 @@ sunucu:  >INFO:OpenVPN Management Interface Version 5 ...
   (`easyrsa revoke` + `gen-crl` + yayınlama) — sadece bağlantıyı kesmekle
   kalmaz, sertifikayı kalıcı olarak geçersiz kılar. Bu, verilen `.ovpn`
   profilinin disconnect sonrası yeniden kullanılamamasını sağlar.
+- **IKEv2 kimlik bilgileri**: her oturum için rastgele 24 baytlık bir EAP
+  parolası üretilir ve yalnızca o oturuma ait strongSwan bağlantısında
+  geçerlidir (`eap_id` o oturumun kimliğine sabitlenir) — bir oturumun
+  parolası başka bir oturumun bağlantısında çalışmaz. Parola, kök-erişimli
+  (0600) tek bir `conf.d` dosyasında durur; bağlantı kesildiğinde önce canlı
+  SA sonlandırılır (`swanctl --terminate`), sonra dosya silinip yeniden
+  yükleme yapılır, böylece kimlik bilgisi de bağlantı tanımı da ortadan
+  kalkar.
+
+  strongSwan kendi CA'sını kullanır; OpenVPN'in easy-rsa CA'sına bağlanmaz,
+  aksi hâlde bir protokolü kapatmak diğerini bozardı.
+
+  Kurulum notu: Ubuntu, eski `strongswan-starter` servisini varsayılan olarak
+  etkinleştirir ve o da UDP 500/4500'ü bağlar. `35-ikev2-setup.sh` onu devre
+  dışı bırakır, `verify.sh` ise tekrar etkinleşmediğini denetler — aksi hâlde
+  swanctl tabanlı daemon sessizce başlayamaz.
+
 - **CRL**: her iptalden sonra yeniden üretilir ve OpenVPN'in okuduğu yola
   kopyalanır; OpenVPN yeni bağlantılarda CRL'i her seferinde yeniden okur —
   servis yeniden başlatma gerekmez.

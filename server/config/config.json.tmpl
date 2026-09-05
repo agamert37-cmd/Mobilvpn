@@ -37,6 +37,17 @@
     "managementPasswordFile": "/etc/openvpn/server/mgmt.pass",
     "ccdDir": "/etc/openvpn/server/ccd"
   },
+  "ikev2": {
+    "enabled": @@IKEV2_ENABLED@@,
+    "subnetCIDR": "@@IKEV2_SUBNET@@",
+    "confDir": "/etc/swanctl/conf.d",
+    "certDir": "/etc/swanctl/x509",
+    "keyDir": "/etc/swanctl/private",
+    "serverCert": "server-cert.pem",
+    "serverKey": "server-key.pem",
+    "caCertPath": "/etc/swanctl/x509ca/ca-cert.pem",
+    "serverId": "@@DOMAIN@@"
+  },
   "dns": {
     "blocklistEnabledDefault": true,
     "resolverAddr": "@@WG_GATEWAY@@",

@@ -28,6 +28,10 @@ IPV6_ENABLED="false"
 OVPN_UDP_PORT="${VPN_OVPN_UDP_PORT:-1194}"
 OVPN_TCP_PORT="${VPN_OVPN_TCP_PORT:-443}"
 OVPN_SUBNET="${VPN_OVPN_SUBNET:-10.77.0.0/16}"
+IKEV2_SUBNET="${VPN_IKEV2_SUBNET:-10.88.0.0/16}"
+# IKEv2 opt-in: install.sh --with-ikev2 (ya da VPN_ENABLE_IKEV2=1) ile açılır.
+IKEV2_ENABLED="${VPN_ENABLE_IKEV2:-0}"
+[ "$IKEV2_ENABLED" = "1" ] && IKEV2_ENABLED="true" || IKEV2_ENABLED="false"
 
 if [ -z "$DOMAIN" ]; then
   log_err "VPN_API_DOMAIN ayarlanmadı (ör. VPN_API_DOMAIN=vpn.example.com). Android istemcisinin"
@@ -66,6 +70,8 @@ else
     "OVPN_UDP_PORT=$OVPN_UDP_PORT" \
     "OVPN_TCP_PORT=$OVPN_TCP_PORT" \
     "OVPN_SUBNET=$OVPN_SUBNET" \
+    "IKEV2_SUBNET=$IKEV2_SUBNET" \
+    "IKEV2_ENABLED=$IKEV2_ENABLED" \
     "FLEET_SECRET=$FLEET_SECRET"
   chmod 600 "$CONFIG_PATH"
   log_ok "Yazıldı: $CONFIG_PATH"

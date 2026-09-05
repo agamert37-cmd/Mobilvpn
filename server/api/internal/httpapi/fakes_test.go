@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"vpnapi/internal/ikev2"
 	"vpnapi/internal/openvpn"
 	"vpnapi/internal/wireguard"
 )
@@ -112,6 +113,56 @@ func (f *fakeOVPN) Stats(cn string, useTCP bool) (*openvpn.ClientStat, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.stats[cn], nil
+}
+
+// fakeIKEv2 stands in for strongSwan, which needs a running daemon and a
+// kernel IPsec datapath that unit tests can't assume.
+type fakeIKEv2 struct {
+	mu               sync.Mutex
+	ready            bool
+	provisionErr     error
+	provisioned      map[string]string // session -> pinned virtual IP
+	stats            map[string]*ikev2.SAStats
+	deprovisionCalls []string
+}
+
+func newFakeIKEv2() *fakeIKEv2 {
+	return &fakeIKEv2{ready: true, provisioned: map[string]string{}, stats: map[string]*ikev2.SAStats{}}
+}
+
+func (f *fakeIKEv2) Ready() bool { return f.ready }
+
+func (f *fakeIKEv2) Provision(sessionID, virtualIP string) (*ikev2.Credential, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.provisionErr != nil {
+		return nil, f.provisionErr
+	}
+	f.provisioned[sessionID] = virtualIP
+	return &ikev2.Credential{
+		Username: sessionID, Password: "fake-eap-password",
+		ServerID: "vpn.test.example", CACertPEM: "CA-PEM",
+	}, nil
+}
+
+func (f *fakeIKEv2) Deprovision(sessionID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.provisioned, sessionID)
+	f.deprovisionCalls = append(f.deprovisionCalls, sessionID)
+	return nil
+}
+
+func (f *fakeIKEv2) Stats(sessionID string) (*ikev2.SAStats, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stats[sessionID], nil
+}
+
+func (f *fakeIKEv2) setStat(sessionID string, bytesIn, bytesOut uint64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stats[sessionID] = &ikev2.SAStats{Established: true, BytesIn: bytesIn, BytesOut: bytesOut}
 }
 
 func (f *fakeOVPN) setStat(cn string, rx, tx uint64) {

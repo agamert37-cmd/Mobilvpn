@@ -7,6 +7,7 @@
 # Usage:
 #   sudo VPN_API_DOMAIN=vpn.example.com ./install.sh
 #   sudo ./install.sh --domain vpn.example.com --yes
+#   sudo ./install.sh --domain vpn.example.com --with-ikev2
 #
 # See README.md for the full list of VPN_* environment variables each
 # individual script accepts (ports, subnets, node id/region, etc.) — any of
@@ -22,6 +23,7 @@ while [ $# -gt 0 ]; do
     --yes|-y) VPN_ASSUME_YES=1; shift ;;
     --skip-firewall) SKIP_FIREWALL=1; shift ;;
     --skip-tls) SKIP_TLS=1; shift ;;
+    --with-ikev2) VPN_ENABLE_IKEV2=1; shift ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -32,7 +34,7 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
-export VPN_API_DOMAIN VPN_ASSUME_YES
+export VPN_API_DOMAIN VPN_ASSUME_YES VPN_ENABLE_IKEV2
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Bu betik root olarak çalıştırılmalıdır (sudo ile deneyin)." >&2
@@ -56,6 +58,11 @@ cd "$INSTALL_DIR/scripts"
 ./10-sysctl-tuning.sh
 ./20-wireguard-setup.sh
 ./30-openvpn-setup.sh
+if [ "${VPN_ENABLE_IKEV2:-0}" = "1" ]; then
+  ./35-ikev2-setup.sh
+else
+  echo "[*] IKEv2 atlandı (etkinleştirmek için: --with-ikev2). WireGuard ve OpenVPN kuruldu."
+fi
 ./50-unbound-dns.sh
 ./update-blocklist.sh || echo "[!] İlk engelleme listesi indirmesi başarısız oldu; daha sonra scripts/update-blocklist.sh ile tekrar deneyin."
 

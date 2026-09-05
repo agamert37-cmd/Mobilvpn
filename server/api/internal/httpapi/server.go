@@ -14,6 +14,7 @@ import (
 
 	"vpnapi/internal/config"
 	"vpnapi/internal/fleet"
+	"vpnapi/internal/ikev2"
 	"vpnapi/internal/ipam"
 	"vpnapi/internal/openvpn"
 	"vpnapi/internal/ratelimit"
@@ -38,6 +39,9 @@ type App struct {
 
 	ovpn     openVPNBackend
 	ovpnPool *ipam.Pool
+
+	ikev2     ikev2Backend
+	ikev2Pool *ipam.Pool
 
 	registry       *fleet.Registry
 	proxy          *fleet.ProxyClient
@@ -106,6 +110,33 @@ func NewApp(cfg config.Config, logger *slog.Logger) (*App, error) {
 		a.ovpnPool = pool
 	}
 
+	if cfg.IKEv2.Enabled {
+		serverID := cfg.IKEv2.ServerID
+		if serverID == "" {
+			// The identity clients verify must be a SAN in the server cert;
+			// the public hostname is what 35-ikev2-setup.sh puts there.
+			serverID = cfg.PublicEndpointHost
+		}
+		a.ikev2 = ikev2.NewManager(ikev2.Config{
+			ConfDir:    cfg.IKEv2.ConfDir,
+			CertDir:    cfg.IKEv2.CertDir,
+			KeyDir:     cfg.IKEv2.KeyDir,
+			ServerCert: cfg.IKEv2.ServerCert,
+			ServerKey:  cfg.IKEv2.ServerKey,
+			CACertPath: cfg.IKEv2.CACertPath,
+			ServerID:   serverID,
+			DNSServers: cfg.WireGuard.DNS,
+		})
+		if !a.ikev2.Ready() {
+			logger.Warn("strongSwan not set up; /connect for IKEV2 will report UNAVAILABLE", "confDir", cfg.IKEv2.ConfDir)
+		}
+		pool, err := ipam.NewPool("ikev2", cfg.IKEv2.SubnetCIDR, subnetGateway(cfg.IKEv2.SubnetCIDR))
+		if err != nil {
+			return nil, fmt.Errorf("httpapi: IKEv2 IP pool: %w", err)
+		}
+		a.ikev2Pool = pool
+	}
+
 	selfNode := fleet.Node{
 		Country:   cfg.NodeRegion,
 		City:      cfg.NodeRegion,
@@ -154,6 +185,10 @@ func (a *App) reserveRestoredSession(sess *session.Session) {
 	case session.ProtocolOpenVPNUDP, session.ProtocolOpenVPNTCP:
 		if a.ovpnPool != nil {
 			_ = a.ovpnPool.Reserve(ip, sess.ID)
+		}
+	case session.ProtocolIKEv2:
+		if a.ikev2Pool != nil {
+			_ = a.ikev2Pool.Reserve(ip, sess.ID)
 		}
 	}
 }
@@ -227,6 +262,10 @@ func (a *App) computeSelfLoad() int {
 		total += a.ovpnPool.Capacity()
 		used += a.ovpnPool.InUse()
 	}
+	if a.ikev2Pool != nil {
+		total += a.ikev2Pool.Capacity()
+		used += a.ikev2Pool.InUse()
+	}
 	if total <= 0 {
 		return 0
 	}
@@ -259,6 +298,17 @@ func (a *App) releaseSession(ctx context.Context, sess *session.Session) {
 		if a.ovpnPool != nil {
 			if ip := net.ParseIP(sess.VirtualIP); ip != nil {
 				a.ovpnPool.Release(ip)
+			}
+		}
+	case session.ProtocolIKEv2:
+		if a.ikev2 != nil {
+			if err := a.ikev2.Deprovision(sess.ID); err != nil {
+				a.logger.Warn("tearing down ikev2 session failed", "error", err)
+			}
+		}
+		if a.ikev2Pool != nil {
+			if ip := net.ParseIP(sess.VirtualIP); ip != nil {
+				a.ikev2Pool.Release(ip)
 			}
 		}
 	}

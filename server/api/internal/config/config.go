@@ -53,6 +53,25 @@ type OpenVPNConfig struct {
 	CCDDir                 string `json:"ccdDir"`
 }
 
+// IKEv2Config drives strongSwan. It exists mainly for phones roaming
+// between Wi-Fi and cellular (MOBIKE) and for clients that would rather
+// use the IKEv2 support built into the OS than install an app.
+type IKEv2Config struct {
+	Enabled bool `json:"enabled"`
+	// SubnetCIDR is this protocol's own tunnel pool; each session gets a
+	// single pinned address out of it (see internal/ikev2).
+	SubnetCIDR string `json:"subnetCIDR"`
+	ConfDir    string `json:"confDir"`
+	CertDir    string `json:"certDir"`
+	KeyDir     string `json:"keyDir"`
+	ServerCert string `json:"serverCert"`
+	ServerKey  string `json:"serverKey"`
+	CACertPath string `json:"caCertPath"`
+	// ServerID must match a subjectAltName in the server certificate: it is
+	// the identity clients verify the server against.
+	ServerID string `json:"serverId"`
+}
+
 type DNSConfig struct {
 	BlocklistEnabledDefault bool   `json:"blocklistEnabledDefault"`
 	ResolverAddr            string `json:"resolverAddr"`
@@ -103,6 +122,7 @@ type Config struct {
 	TLS               TLSConfig       `json:"tls"`
 	WireGuard         WireGuardConfig `json:"wireguard"`
 	OpenVPN           OpenVPNConfig   `json:"openvpn"`
+	IKEv2             IKEv2Config     `json:"ikev2"`
 	DNS               DNSConfig       `json:"dns"`
 	Fleet             FleetConfig     `json:"fleet"`
 	RateLimit         RateLimitConfig `json:"rateLimit"`
@@ -144,6 +164,16 @@ func Default() Config {
 			ManagementTCPAddr:      "127.0.0.1:7506",
 			ManagementPasswordFile: "/etc/openvpn/server/mgmt.pass",
 			CCDDir:                 "/etc/openvpn/server/ccd",
+		},
+		IKEv2: IKEv2Config{
+			Enabled:    false, // opt-in: needs scripts/35-ikev2-setup.sh
+			SubnetCIDR: "10.88.0.0/16",
+			ConfDir:    "/etc/swanctl/conf.d",
+			CertDir:    "/etc/swanctl/x509",
+			KeyDir:     "/etc/swanctl/private",
+			ServerCert: "server-cert.pem",
+			ServerKey:  "server-key.pem",
+			CACertPath: "/etc/swanctl/x509ca/ca-cert.pem",
 		},
 		DNS: DNSConfig{
 			BlocklistEnabledDefault: true,

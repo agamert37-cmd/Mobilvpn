@@ -38,19 +38,23 @@ type Session struct {
 	// Telemetry sampling baseline, used to turn cumulative wg/openvpn byte
 	// counters into an instantaneous Mbps figure between polls. Never
 	// persisted to disk and never exposed directly.
-	sampleMu     sync.Mutex
-	lastSampleAt time.Time
-	lastRxBytes  uint64
-	lastTxBytes  uint64
-	history      []float32
+	sampleMu      sync.Mutex
+	lastSampleAt  time.Time
+	lastDownBytes uint64
+	lastUpBytes   uint64
+	history       []float32
 }
 
-// Sample records a new cumulative rx/tx byte reading for the session and
-// returns the instantaneous down/up throughput in Mbps computed against the
-// previous reading, plus a rolling 16-sample history (mirroring the
-// client's own trafficHistory length so a fresh client immediately has a
-// full sparkline instead of ramping up from zero).
-func (s *Session) Sample(rxBytes, txBytes uint64) (downMbps, upMbps float32, history []float32) {
+// Sample records a new cumulative byte reading for the session and returns
+// the instantaneous throughput in Mbps computed against the previous
+// reading, plus a rolling 16-sample history (mirroring the client's own
+// trafficHistory length so a fresh client immediately has a full sparkline
+// instead of ramping up from zero).
+//
+// Both counters are from the CLIENT's point of view — callers are
+// responsible for flipping the server-side rx/tx their tunnel backend
+// reports (see the telemetry handler).
+func (s *Session) Sample(downBytes, upBytes uint64) (downMbps, upMbps float32, history []float32) {
 	s.sampleMu.Lock()
 	defer s.sampleMu.Unlock()
 
@@ -58,17 +62,17 @@ func (s *Session) Sample(rxBytes, txBytes uint64) (downMbps, upMbps float32, his
 	if !s.lastSampleAt.IsZero() {
 		elapsed := now.Sub(s.lastSampleAt).Seconds()
 		if elapsed > 0 {
-			if rxBytes >= s.lastRxBytes {
-				downMbps = float32(float64(rxBytes-s.lastRxBytes) * 8 / elapsed / 1_000_000)
+			if downBytes >= s.lastDownBytes {
+				downMbps = float32(float64(downBytes-s.lastDownBytes) * 8 / elapsed / 1_000_000)
 			}
-			if txBytes >= s.lastTxBytes {
-				upMbps = float32(float64(txBytes-s.lastTxBytes) * 8 / elapsed / 1_000_000)
+			if upBytes >= s.lastUpBytes {
+				upMbps = float32(float64(upBytes-s.lastUpBytes) * 8 / elapsed / 1_000_000)
 			}
 		}
 	}
 	s.lastSampleAt = now
-	s.lastRxBytes = rxBytes
-	s.lastTxBytes = txBytes
+	s.lastDownBytes = downBytes
+	s.lastUpBytes = upBytes
 
 	s.history = append(s.history, downMbps)
 	if len(s.history) > 16 {

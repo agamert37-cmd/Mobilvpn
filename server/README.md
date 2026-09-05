@@ -17,6 +17,7 @@ vpn-api (Go, bağımlılıksız, TLS'i kendi sonlandırır)
       │
       ├─ WireGuard'ı yönetir  → `wg` / `ip` (çekirdek WireGuard arayüzü: wg0)
       ├─ OpenVPN'i yönetir    → easy-rsa (sertifika) + management soketi (UDP:1194, TCP:443)
+      ├─ strongSwan'ı yönetir → swanctl conf.d (oturum başına IKEv2, isteğe bağlı)
       └─ unbound'u yönetir    → DNS-over-TLS ile sızıntısız, loglamasız çözümleme
 ```
 
@@ -24,8 +25,9 @@ vpn-api (Go, bağımlılıksız, TLS'i kendi sonlandırır)
   yüzeyi, ChaCha20-Poly1305.
 - **OpenVPN (UDP + TCP/443)** — ikincil protokol; TCP/443 özellikle kısıtlayıcı
   güvenlik duvarlarını aşmak (DPI/sansür direnci) için var.
-- **IKEv2** — bu sürümde desteklenmiyor; `/api/v1/connect` bunun için dürüstçe
-  `501 UNSUPPORTED` döner (bkz. docs/API.md).
+- **IKEv2/IPsec** — isteğe bağlı (`install.sh --with-ikev2`): telefonlar
+  Wi-Fi ve hücresel arasında dolaşırken tüneli koparmayan MOBIKE için ve
+  işletim sisteminin yerleşik IKEv2 istemcisini kullanmak isteyenler için.
 
 Tam teknik tasarım için **docs/ARCHITECTURE.md**, uç nokta sözleşmesi için
 **docs/API.md**, tehdit modeli / no-logs politikası için **docs/SECURITY.md**
@@ -59,6 +61,7 @@ Encrypt / certbot) alınacağı genel ana bilgisayar adıdır — DNS'te bu sunu
 genel IP'sine işaret etmelidir. Kurulum betiği sırayla:
 
 1. Paketleri kurar (wireguard-tools, openvpn, easy-rsa, unbound, nftables, golang-go, ...)
+   ve `--with-ikev2` verildiyse strongSwan'ı kurup kendi CA'sını üretir
 2. Çekirdek ağ ayarlarını uygular (BBR, ip_forward, tampon boyutları)
 3. WireGuard sunucu kimliğini üretir ve `wg0`'ı ayağa kaldırır
 4. easy-rsa PKI'sini kurar ve iki OpenVPN sunucusunu (UDP/1194, TCP/443) ayağa kaldırır
@@ -90,6 +93,8 @@ Her betik, makul varsayılanlarla çalışır ama şunları özelleştirebilirsi
 | `VPN_WAN_IFACE` | otomatik algılanır | NAT/masquerade için WAN arayüzü |
 | `VPN_ENABLE_IPV6` | otomatik algılanır | Çift yığın tünel. Ana bilgisayarda global IPv6 varsa açılır (IPv6 sızıntısını kapatır); yoksa hiç açılmaz. `1`/`0` ile zorlanabilir |
 | `VPN_WG_SUBNET_V6` | `fd00:66::/64` | Tünelin IPv6 (ULA) öneki |
+| `VPN_ENABLE_IKEV2` | `0` | IKEv2/IPsec kurulumu (`install.sh --with-ikev2` ile aynı) |
+| `VPN_IKEV2_SUBNET` | `10.88.0.0/16` | IKEv2 istemcilerinin tünel alt ağı |
 
 Betikler ayrıca tek tek de çalıştırılabilir (`scripts/00-prereqs.sh`, ...),
 tümü idempotenttir (ikinci çalıştırma güvenlidir).
@@ -151,7 +156,9 @@ curl http://127.0.0.1:8080/api/v1/health
   hiçbir değişiklik yapılmamıştır (mevcut DTO sözleşmesiyle tam uyumludur, üzerine
   yalnızca istemcinin görmezden geldiği ek/opsiyonel alanlar eklenmiştir — bkz.
   docs/API.md).
-- IKEv2/IPsec desteklenmiyor (yol haritası — bkz. docs/ARCHITECTURE.md).
+- IKEv2 varsayılan olarak kapalıdır (`--with-ikev2` ile açılır); açıkken her
+  oturum kendi strongSwan bağlantısını, kendi tek adresli havuzunu ve kendi
+  EAP kimlik bilgisini alır.
 - IPv6 tüneli, ana bilgisayarın global IPv6 bağlantısı varsa otomatik olarak
   açılır ve IPv6 sızıntısını kapatır; yoksa hiçbir yerde `::/0` reklam
   edilmez ve sızıntı istemci tarafında çözülmelidir (bkz. docs/SECURITY.md).

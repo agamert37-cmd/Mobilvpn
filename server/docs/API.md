@@ -85,8 +85,23 @@ olur (istemci henüz bağlanmadı, yalnızca kimlik bilgisi hazırlandı) ve yan
 ek olarak `ovpnProfile` içerir: tamamen kendi kendine yeten, gömülü
 sertifikalı bir `.ovpn` profili metni.
 
-`IKEV2` isteği **`501 Not Implemented`** ile `success: false` döner —
-sahte bir başarı üretilmez.
+`IKEV2` için de yanıt `"PROVISIONED"` olur ve ek alanlarla birlikte gelir:
+
+```json
+{
+  "ikev2ServerId": "vpn.example.com",
+  "ikev2Username": "sess_tr_ist_01_3f9a...",
+  "ikev2Password": "tek kullanımlık EAP parolası",
+  "ikev2CaCertPem": "-----BEGIN CERTIFICATE-----\n..."
+}
+```
+
+Bunlar, işletim sisteminin yerleşik **IKEv2/IPsec MSCHAPv2** profiline
+girilecek değerlerdir; `ikev2ServerId`, sunucu sertifikasının doğrulanacağı
+kimliktir. Kullanıcı adı oturum kimliğiyle aynıdır ve o oturuma özel
+strongSwan bağlantısı **yalnızca bu kimliği** kabul eder — başka bir
+oturumun parolası bu bağlantıda çalışmaz. IKEv2 isteğe bağlıdır
+(`install.sh --with-ikev2`); kapalıysa yanıt `503 UNAVAILABLE` olur.
 
 HTTP durum kodları: `200` başarı, `400` geçersiz istek (bilinmeyen
 `serverId`/protokol/anahtar), `429` hız sınırı, `503` kapasite dolu ya da

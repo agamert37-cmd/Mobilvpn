@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -48,6 +49,7 @@ func main() {
 		"listenAddr", cfg.ListenAddr,
 		"wireguardEnabled", cfg.WireGuard.Enabled,
 		"openvpnEnabled", cfg.OpenVPN.Enabled,
+		"ikev2Enabled", cfg.IKEv2.Enabled,
 	)
 
 	app, err := httpapi.NewApp(cfg, logger)
@@ -150,6 +152,12 @@ func emitShellConfig(cfg config.Config) {
 		{"VPN_CFG_OVPN_MGMT_TCP", cfg.OpenVPN.ManagementTCPAddr},
 		{"VPN_CFG_OVPN_UDP_PORT", strconv.Itoa(cfg.OpenVPN.UDPPort)},
 		{"VPN_CFG_OVPN_TCP_PORT", strconv.Itoa(cfg.OpenVPN.TCPPort)},
+		{"VPN_CFG_IKEV2_ENABLED", strconv.FormatBool(cfg.IKEv2.Enabled)},
+		{"VPN_CFG_IKEV2_SUBNET", cfg.IKEv2.SubnetCIDR},
+		{"VPN_CFG_IKEV2_CONFDIR", cfg.IKEv2.ConfDir},
+		{"VPN_CFG_IKEV2_CERT", filepath.Join(cfg.IKEv2.CertDir, cfg.IKEv2.ServerCert)},
+		{"VPN_CFG_IKEV2_KEY", filepath.Join(cfg.IKEv2.KeyDir, cfg.IKEv2.ServerKey)},
+		{"VPN_CFG_IKEV2_SERVER_ID", cfg.IKEv2.ServerID},
 		{"VPN_CFG_DNS_RESOLVER", cfg.DNS.ResolverAddr},
 	}
 	for _, pair := range kv {

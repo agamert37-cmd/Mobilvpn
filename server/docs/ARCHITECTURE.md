@@ -40,6 +40,10 @@
 - **wireguard** — sunucu kimliğini (`crypto/ecdh` ile X25519, `wg genkey` ile
   bit-bit uyumlu) üretir/yükler; peer ekleme/çıkarma/telemetri için `wg`/`ip`
   komutlarını çalıştırır.
+- **ikev2** — strongSwan'ın swanctl arayüzünü sürer: oturum başına bir
+  bağlantı + tek adresli havuz + EAP kimlik bilgisini `conf.d` altına yazar,
+  `swanctl --load-all` ile uygular, telemetriyi `--list-sas --raw`
+  çıktısından okur.
 - **openvpn** — easy-rsa PKI'sine oturum başına sertifika bastırır/iptal eder;
   OpenVPN'in management soketi (parola korumalı TCP) üzerinden canlı istemci
   istatistiklerini okur ve oturumları zorla sonlandırır.
@@ -88,9 +92,19 @@ kendisini içeren tek elemanlı bir liste döner — sıfır yapılandırma gere
 - **OpenVPN, kısıtlı ağlar için ikincil protokol.** Bağlantı anında sunucu
   tarafı henüz "ESTABLISHED" değildir (istemci henüz TLS el sıkışmasını
   başlatmamıştır) — dürüstçe `status: "PROVISIONED"` döner.
-- **IKEv2 uygulanmadı.** Sahte bir "başarılı" yanıt üretmek yerine
-  `501 Not Implemented` + `success: false` dönmek, gerçek bir tüneli
-  taklit etmekten daha doğru mühendisliktir.
+- **IKEv2, mobil dolaşım için isteğe bağlı üçüncü protokol.** OpenVPN gibi
+  bağlantı anında `PROVISIONED` döner. Her oturum kendi bağlantısını ve
+  `eap_id`'sini aldığı için bir oturumun kimlik bilgisi başka bir oturumun
+  bağlantısında kullanılamaz; tek adresli havuz da API'nin baştan bildirdiği
+  `virtualIp`'yi gerçek kılar.
+
+  Ölçüm notu: her bağlan/kes işlemi `swanctl --load-all` gerektirir. 150
+  eşzamanlı oturum yapılandırmasıyla bu yeniden yükleme ölçüldüğünde 0,23 s
+  sürdü — kabul edilebilir, ama O(n) olduğu için çok büyük düğümlerde akılda
+  tutulmalı.
+
+  strongSwan'ın kendi PKI'si kullanılır (OpenVPN'in easy-rsa CA'sı değil):
+  aksi hâlde OpenVPN'i kapatmak IKEv2'yi de bozardı.
 
 ## Hız için yapılan seçimler
 

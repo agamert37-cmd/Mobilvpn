@@ -25,8 +25,12 @@ define OVPN_UDP_PORT = @@OVPN_UDP_PORT@@
 define OVPN_TCP_PORT = @@OVPN_TCP_PORT@@
 define API_PUBLIC_PORT = @@API_PUBLIC_PORT@@
 define TUNNEL_IFACES = { "@@WG_IFACE@@", "@@OVPN_UDP_DEV@@", "@@OVPN_TCP_DEV@@" }
-define TUNNEL_SUBNETS = { @@WG_SUBNET@@, @@OVPN_SUBNET@@ }
+define TUNNEL_SUBNETS = { @@WG_SUBNET@@, @@OVPN_SUBNET@@, @@IKEV2_SUBNET@@ }
 define TUNNEL_SUBNETS_V6 = { @@WG_SUBNET_V6@@ }
+# IKEv2 has no tunnel interface to match on: with kernel IPsec the decrypted
+# packets surface on the WAN interface carrying the inner source address, so
+# its rules key on the source subnet instead of iifname.
+define IKEV2_SUBNET = @@IKEV2_SUBNET@@
 
 table inet filter {
   chain input {
@@ -47,6 +51,18 @@ table inet filter {
     udp dport $OVPN_UDP_PORT accept
     tcp dport $OVPN_TCP_PORT accept
     tcp dport $API_PUBLIC_PORT accept
+
+    # IKEv2: 500 for the initial exchange, 4500 once NAT traversal kicks in
+    # (which is essentially always on mobile networks), plus the ESP payload
+    # itself for the rare client not behind NAT.
+    udp dport { 500, 4500 } accept
+    meta l4proto esp accept
+
+    # Decrypted IKEv2 client traffic arrives on the WAN interface with an
+    # inner source address, so DNS to this resolver has to be allowed by
+    # source subnet rather than by tunnel interface.
+    ip saddr $IKEV2_SUBNET udp dport 53 accept
+    ip saddr $IKEV2_SUBNET tcp dport 53 accept
 
     # This box's own resolver, reachable only from tunnel interfaces —
     # never from the WAN side.
@@ -78,8 +94,14 @@ table inet filter {
     iifname $TUNNEL_IFACES udp dport 53 drop
     iifname $TUNNEL_IFACES tcp dport 53 drop
 
-    # The one rule that actually lets tunnel clients reach the internet.
+    # Same DNS-leak block for IKEv2, matched by source subnet since it has
+    # no tunnel interface of its own.
+    ip saddr $IKEV2_SUBNET udp dport 53 drop
+    ip saddr $IKEV2_SUBNET tcp dport 53 drop
+
+    # The rules that actually let tunnel clients reach the internet.
     iifname $TUNNEL_IFACES oifname $WAN_IFACE accept
+    ip saddr $IKEV2_SUBNET oifname $WAN_IFACE accept
   }
 
   chain output {

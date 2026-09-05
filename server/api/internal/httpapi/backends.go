@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 
+	"vpnapi/internal/ikev2"
 	"vpnapi/internal/openvpn"
 	"vpnapi/internal/wireguard"
 )
@@ -29,7 +30,15 @@ type openVPNBackend interface {
 	Stats(cn string, useTCP bool) (*openvpn.ClientStat, error)
 }
 
+type ikev2Backend interface {
+	Ready() bool
+	Provision(sessionID, virtualIP string) (*ikev2.Credential, error)
+	Deprovision(sessionID string) error
+	Stats(sessionID string) (*ikev2.SAStats, error)
+}
+
 var (
 	_ wireGuardBackend = (*wireguard.Manager)(nil)
 	_ openVPNBackend   = (*openvpn.Manager)(nil)
+	_ ikev2Backend     = (*ikev2.Manager)(nil)
 )
